@@ -9,12 +9,12 @@ Android app.
 - Zero runtime dependencies. `node:http`, `node:crypto`, global `fetch`.
 - Node 20+.
 - Works with **Twilio or Telnyx** behind one provider seam.
-- 110 tests, including integration tests over real sockets with real webhook
+- 120 tests, including integration tests over real sockets with real webhook
   signatures (HMAC-SHA1 for Twilio, Ed25519 for Telnyx). No mocking of the HTTP
   layer, no network access needed to run them.
 
 ```
-npm test      # 110 tests, ~1.2s
+npm test      # 120 tests, ~1.2s
 npm start     # needs the env vars below
 ```
 
@@ -188,6 +188,36 @@ curl -X PUT https://you/subscribers/%2B15559000001 \
 Identical bounds mean all day. A window that crosses midnight is supported.
 Unknown fields are dropped; invalid values return 422 rather than being stored.
 
+### Two kinds of credential
+
+The `API_KEY` is the **operator** key. It configures every number, so it can
+never be given to a customer.
+
+Every subscriber also has its own `apiToken`, issued automatically and used the
+same way — `Authorization: Bearer <apiToken>`. It authenticates the caller *and*
+identifies which number they are, which the phone app has no other way of
+knowing. With it:
+
+```bash
+curl https://you/me                                    # own settings
+curl -X PATCH https://you/me -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"message":"Tied up until 4."}'
+curl -X POST https://you/billing/verify -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"purchaseToken":"..."}'
+```
+
+`/me` accepts a deliberately narrower set of fields than the operator API.
+`unlimited` and `limit` are absent, because a customer who could set them would
+not need to buy anything; `apiToken` is absent so a stolen token cannot be
+rotated to lock the real owner out.
+
+The operator retrieves a customer's token from a dedicated endpoint, so it is
+the operator — not a list response — that puts a credential in shell history:
+
+```bash
+curl https://you/subscribers/%2B15559000001/token -H "Authorization: Bearer $API_KEY"
+```
+
 ## Storage
 
 Two backends behind one interface — `byTwilioNumber`, `upsert`, `recordReply`,
@@ -244,9 +274,9 @@ five methods.
   Developer API answer for a refunded in-app product is not reliably immediate.
   Closing that needs the Voided Purchases API or Real-time Developer
   Notifications on a schedule.
-- **The control panel is operator-facing.** It authenticates with the single
-  `API_KEY`, so it configures *every* number. There is no per-subscriber access, so
-  you cannot hand it to a customer to self-serve — that needs a per-subscriber token
-  scoped to one number.
+- **The control panel itself is still operator-facing.** Per-subscriber tokens now
+  exist and are what the phone app uses, but `panel.js` only authenticates with the
+  shared `API_KEY`. Handing a customer a web UI of their own means teaching the panel
+  to accept an `apiToken` and scope itself to `/me`.
 - **No outbound status tracking.** Sent messages are not confirmed delivered; a
   status callback would be needed for that.

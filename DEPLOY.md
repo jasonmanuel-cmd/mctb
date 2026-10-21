@@ -117,7 +117,27 @@ every number. Verification against Google is the authorisation. That does mean
 per-subscriber API tokens are still the missing piece for letting customers
 self-serve their own settings.
 
-## 6. The constraint that cannot be engineered away
+## 6. Handing a customer their token
+
+Each subscriber has its own `apiToken`, issued automatically. It is what the
+phone app presents: it authenticates the device *and* tells the server which
+number it is, which the app has no other way of knowing.
+
+After creating a subscriber in the panel, fetch the token as the operator:
+
+```bash
+curl https://<your-host>/subscribers/%2B15559000001/token \
+  -H "Authorization: Bearer $API_KEY"
+# {"twilioNumber":"+15559000001","apiToken":"..."}
+```
+
+Give that token to the customer. With it they can read and edit their own
+settings via `/me` and report a purchase to `/billing/verify`, and nothing else —
+`unlimited` and `limit` are deliberately not writable through `/me`.
+
+Never give a customer the `API_KEY`. It configures every number.
+
+## 7. The constraint that cannot be engineered away
 
 Callers must dial **the Telnyx number**, not the subscriber's personal SIM.
 Neither Telnyx nor Twilio can see a call that never reaches them, and carrier
@@ -125,7 +145,7 @@ call-forward-on-no-answer is not a workaround: the server would dial the number
 that just forwarded, and loop. The subscriber publishes the Telnyx number as
 their work line.
 
-## 7. Android app — still blocked
+## 8. Android app — still blocked
 
 The Play Store side has never been compiled. GitHub Actions refuses to start any
 job on this repository with:

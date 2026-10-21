@@ -85,9 +85,33 @@ export function createApp({ store, provider, config, logger = console, billing =
 
   function bearerAuthed(req) {
     if (!config.apiKey) return false; // settings API disabled entirely
-    const header = req.headers.authorization ?? "";
-    const match = /^Bearer (.+)$/.exec(header);
-    return match?.[1] === config.apiKey;
+    return bearerToken(req) === config.apiKey;
+  }
+
+  function bearerToken(req) {
+    const match = /^Bearer (.+)$/.exec(req.headers.authorization ?? "");
+    return match?.[1] ?? null;
+  }
+
+  /**
+   * Works out who is calling: the operator, or one subscriber acting as itself.
+   *
+   * The operator key configures every number and can never be handed to a
+   * customer, so each subscriber also has its own token. That is what the app
+   * holds - it authenticates the device and identifies which number it is,
+   * which the app otherwise has no way of knowing.
+   *
+   * Subscribers are matched by scanning, which is O(n) over subscriber count.
+   * That is fine at the scale this runs at; past a few thousand it wants an
+   * index, the same way all() wanted SMEMBERS instead of KEYS.
+   */
+  async function resolveActor(req) {
+    const token = bearerToken(req);
+    if (!token) return null;
+    if (config.apiKey && token === config.apiKey) return { kind: "operator" };
+
+    const match = (await store.all()).find((sub) => sub.apiToken && sub.apiToken === token);
+    return match ? { kind: "subscriber", subscriber: match } : null;
   }
 
   return {
@@ -111,12 +135,20 @@ export function createApp({ store, provider, config, logger = console, billing =
           return send(res, 200, PANEL_HTML, { "Content-Type": "text/html; charset=utf-8" });
         }
 
+        if (pathname === "/me") {
+          return await handleMe(req, res);
+        }
+
         if (req.method === "POST" && pathname === "/billing/verify") {
           return await handleBillingVerify(req, res);
         }
 
         if (pathname === "/subscribers") {
           return await handleSubscriberList(req, res);
+        }
+
+        if (pathname.endsWith("/token") && pathname.startsWith("/subscribers/")) {
+          return await handleSubscriberToken(req, res, pathname);
         }
 
         if (pathname.startsWith("/subscribers/")) {
@@ -269,12 +301,21 @@ export function createApp({ store, provider, config, logger = console, billing =
       return send(res, 400, { error: "invalid_json" });
     }
 
-    const twilioNumber = digitsOf(body.twilioNumber ?? "");
-    if (!twilioNumber) return send(res, 400, { error: "invalid_number" });
-
     const purchaseToken =
       typeof body.purchaseToken === "string" ? body.purchaseToken.trim() : "";
     if (!purchaseToken) return send(res, 400, { error: "missing_purchase_token" });
+
+    // A subscriber token carries the number, so the app never has to be told
+    // which server-side number it was assigned. The operator key is not
+    // scoped, so an operator call must name the number explicitly.
+    const actor = await resolveActor(req);
+    if (!actor) return send(res, 401, { error: "unauthorized" });
+
+    const twilioNumber =
+      actor.kind === "subscriber"
+        ? actor.subscriber.twilioNumber
+        : digitsOf(body.twilioNumber ?? "");
+    if (!twilioNumber) return send(res, 400, { error: "invalid_number" });
 
     const existing = await store.byTwilioNumber(twilioNumber);
     if (!existing) return send(res, 404, { error: "subscriber_not_found" });
@@ -304,6 +345,103 @@ export function createApp({ store, provider, config, logger = console, billing =
 
     logger.info("purchase verified", { twilioNumber, orderId: result.orderId ?? null });
     return send(res, 200, { unlocked: true, orderId: result.orderId ?? null });
+  }
+
+  /**
+   * What a subscriber may change about itself.
+   *
+   * Deliberately narrower than the operator's sanitize(): `unlimited` and
+   * `limit` are absent, because a customer who could set them would not need
+   * to buy anything. `apiToken` is absent too, or a stolen token could be
+   * rotated to lock the real owner out.
+   */
+  function sanitizeSelfService(patch) {
+    const allowed = {};
+    if (typeof patch.enabled === "boolean") allowed.enabled = patch.enabled;
+    if (typeof patch.message === "string") allowed.message = patch.message;
+    if (typeof patch.timeZone === "string") allowed.timeZone = patch.timeZone;
+    if (typeof patch.forwardTo === "string") allowed.forwardTo = patch.forwardTo;
+    if (patch.activeHours && typeof patch.activeHours === "object") {
+      allowed.activeHours = {};
+      if (Number.isInteger(patch.activeHours.startMinuteOfDay)) {
+        allowed.activeHours.startMinuteOfDay = patch.activeHours.startMinuteOfDay;
+      }
+      if (Number.isInteger(patch.activeHours.endMinuteOfDay)) {
+        allowed.activeHours.endMinuteOfDay = patch.activeHours.endMinuteOfDay;
+      }
+      if (typeof patch.activeHours.alwaysOn === "boolean") {
+        allowed.activeHours.alwaysOn = patch.activeHours.alwaysOn;
+      }
+    }
+    return allowed;
+  }
+
+  /** A subscriber reading and editing its own settings with its own token. */
+  async function handleMe(req, res) {
+    const actor = await resolveActor(req);
+    if (!actor) {
+      return send(res, 401, { error: "unauthorized" });
+    }
+    if (actor.kind !== "subscriber") {
+      // The operator key is not scoped to one number, so "me" is meaningless.
+      return send(res, 400, { error: "operator_key_not_scoped", hint: "use /subscribers/:number" });
+    }
+
+    const number = actor.subscriber.twilioNumber;
+
+    if (req.method === "GET") {
+      return send(res, 200, redact(await store.byTwilioNumber(number)));
+    }
+
+    if (req.method !== "PATCH" && req.method !== "PUT") {
+      return send(res, 405, { error: "method_not_allowed" });
+    }
+
+    let patch;
+    try {
+      patch = JSON.parse(await readBody(req));
+    } catch {
+      return send(res, 400, { error: "invalid_json" });
+    }
+
+    const allowed = sanitizeSelfService(patch);
+    if (Object.keys(allowed).length === 0) {
+      return send(res, 400, { error: "no_recognised_fields" });
+    }
+
+    try {
+      const next = await store.upsert(number, allowed);
+      return send(res, 200, redact(next));
+    } catch (err) {
+      return send(res, 400, { error: "invalid_settings", detail: err.message });
+    }
+  }
+
+  /**
+   * Reveals one subscriber's token so the operator can hand it to that
+   * customer.
+   *
+   * A separate endpoint rather than a field on GET /subscribers/:number,
+   * because credentials should not ride along in ordinary reads - they end up
+   * in shell history, proxy logs and screenshots that way. Operator-only.
+   */
+  async function handleSubscriberToken(req, res, pathname) {
+    if (!bearerAuthed(req)) {
+      return send(res, config.apiKey ? 401 : 503, {
+        error: config.apiKey ? "unauthorized" : "settings_api_disabled",
+      });
+    }
+    if (req.method !== "GET") return send(res, 405, { error: "method_not_allowed" });
+
+    const number = digitsOf(
+      decodeURIComponent(pathname.slice("/subscribers/".length, -"/token".length)),
+    );
+    if (!number) return send(res, 400, { error: "invalid_number" });
+
+    const sub = await store.byTwilioNumber(number);
+    if (!sub) return send(res, 404, { error: "not_found" });
+
+    return send(res, 200, { twilioNumber: sub.twilioNumber, apiToken: sub.apiToken });
   }
 
   async function handleSubscriber(req, res, pathname) {
@@ -354,7 +492,10 @@ export function createApp({ store, provider, config, logger = console, billing =
 
   /** Never hand internal bookkeeping back over the API. */
   function redact(sub) {
-    return { ...sub, lastReply: undefined };
+    // apiToken is a credential and purchaseToken is a Play receipt; neither
+    // belongs in a list response, a log line, or the panel HTML.
+    const { lastReply, apiToken, purchaseToken, ...rest } = sub;
+    return rest;
   }
 
   /** Whitelist what the control panel may change. */

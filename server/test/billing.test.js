@@ -64,13 +64,15 @@ function mockRes() {
   };
 }
 
-async function verify(harness, body) {
+async function verify(harness, body, auth = null) {
   const res = mockRes();
+  const headers = { "content-type": "application/json" };
+  if (auth) headers.authorization = `Bearer ${auth}`;
   await harness.app.handle(
     {
       method: "POST",
       url: "/billing/verify",
-      headers: { "content-type": "application/json" },
+      headers,
       body: typeof body === "string" ? body : JSON.stringify(body),
     },
     res,
@@ -94,7 +96,7 @@ function fakePlay(reply, { status = 200 } = {}) {
 }
 
 async function seedSubscriber(store, twilioNumber) {
-  await store.upsert(twilioNumber, {
+  return store.upsert(twilioNumber, {
     enabled: true,
     forwardTo: "+15558000002",
     message: "On a job.",
@@ -129,16 +131,16 @@ test("a purchase Google confirms lifts the free tier", async (t) => {
 
   const h = buildHarness({ billing });
   t.after(() => fs.rmSync(h.dir, { recursive: true, force: true }));
-  await seedSubscriber(h.store, "+15559000001");
+  const sub = await seedSubscriber(h.store, "+15559000001");
 
-  const r = await verify(h, { twilioNumber: "+15559000001", purchaseToken: "real-token" });
+  const r = await verify(h, { purchaseToken: "real-token" }, sub.apiToken);
   assert.equal(r.status, 200);
   assert.equal(r.body.unlocked, true);
   assert.equal(r.body.orderId, "GPA.1234-5678");
 
-  const sub = await h.store.byTwilioNumber("+15559000001");
-  assert.equal(sub.unlimited, true);
-  assert.equal(sub.purchaseToken, "real-token");
+  const after = await h.store.byTwilioNumber("+15559000001");
+  assert.equal(after.unlimited, true);
+  assert.equal(after.purchaseToken, "real-token");
 
   // The product id and package must come from config, not the request.
   assert.match(play.calls[0].url, /com\.mctb\.autoreply/);
@@ -156,14 +158,14 @@ test("a token Google has never heard of is rejected", async (t) => {
 
   const h = buildHarness({ billing });
   t.after(() => fs.rmSync(h.dir, { recursive: true, force: true }));
-  await seedSubscriber(h.store, "+15559000001");
+  const sub = await seedSubscriber(h.store, "+15559000001");
 
-  const r = await verify(h, { twilioNumber: "+15559000001", purchaseToken: "forged" });
+  const r = await verify(h, { purchaseToken: "forged" }, sub.apiToken);
   assert.equal(r.status, 402);
   assert.equal(r.body.reason, "token_not_found");
 
-  const sub = await h.store.byTwilioNumber("+15559000001");
-  assert.equal(sub.unlimited, false, "a rejected purchase must not unlock anything");
+  const after = await h.store.byTwilioNumber("+15559000001");
+  assert.equal(after.unlimited, false, "a rejected purchase must not unlock anything");
 });
 
 test("a cancelled or refunded purchase is rejected", async (t) => {
@@ -176,9 +178,9 @@ test("a cancelled or refunded purchase is rejected", async (t) => {
 
   const h = buildHarness({ billing });
   t.after(() => fs.rmSync(h.dir, { recursive: true, force: true }));
-  await seedSubscriber(h.store, "+15559000001");
+  const sub = await seedSubscriber(h.store, "+15559000001");
 
-  const r = await verify(h, { twilioNumber: "+15559000001", purchaseToken: "refunded" });
+  const r = await verify(h, { purchaseToken: "refunded" }, sub.apiToken);
   assert.equal(r.status, 402);
   assert.equal(r.body.reason, "not_purchased");
   assert.equal((await h.store.byTwilioNumber("+15559000001")).unlimited, false);
@@ -196,13 +198,13 @@ test("one purchase cannot unlock a second number", async (t) => {
 
   const h = buildHarness({ billing });
   t.after(() => fs.rmSync(h.dir, { recursive: true, force: true }));
-  await seedSubscriber(h.store, "+15559000001");
-  await seedSubscriber(h.store, "+15559000002");
+  const one = await seedSubscriber(h.store, "+15559000001");
+  const two = await seedSubscriber(h.store, "+15559000002");
 
-  const first = await verify(h, { twilioNumber: "+15559000001", purchaseToken: "shared-token" });
+  const first = await verify(h, { purchaseToken: "shared-token" }, one.apiToken);
   assert.equal(first.status, 200);
 
-  const second = await verify(h, { twilioNumber: "+15559000002", purchaseToken: "shared-token" });
+  const second = await verify(h, { purchaseToken: "shared-token" }, two.apiToken);
   assert.equal(second.status, 409);
   assert.equal(second.body.error, "purchase_already_redeemed");
   assert.equal((await h.store.byTwilioNumber("+15559000002")).unlimited, false);
@@ -221,11 +223,11 @@ test("re-verifying the same purchase is idempotent", async (t) => {
 
   const h = buildHarness({ billing });
   t.after(() => fs.rmSync(h.dir, { recursive: true, force: true }));
-  await seedSubscriber(h.store, "+15559000001");
+  const sub = await seedSubscriber(h.store, "+15559000001");
 
-  await verify(h, { twilioNumber: "+15559000001", purchaseToken: "tok" });
+  await verify(h, { purchaseToken: "tok" }, sub.apiToken);
   // A dropped response makes the app retry; that must not fail.
-  const retry = await verify(h, { twilioNumber: "+15559000001", purchaseToken: "tok" });
+  const retry = await verify(h, { purchaseToken: "tok" }, sub.apiToken);
   assert.equal(retry.status, 200);
   assert.equal(retry.body.alreadyVerified, true);
 });
@@ -241,7 +243,7 @@ test("an unknown subscriber is refused before any API call", async (t) => {
   const h = buildHarness({ billing });
   t.after(() => fs.rmSync(h.dir, { recursive: true, force: true }));
 
-  const r = await verify(h, { twilioNumber: "+15559000099", purchaseToken: "tok" });
+  const r = await verify(h, { twilioNumber: "+15559000099", purchaseToken: "tok" }, "sekret");
   assert.equal(r.status, 404);
   assert.equal(play.calls.length, 0);
 });

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_MESSAGE, FREE_TIER_LIMIT, DEFAULT_DEBOUNCE_MS, MINUTES_IN_DAY, digitsOf } from "./policy.js";
@@ -60,14 +61,8 @@ export function createStore(filePath) {
     const key = digitsOf(twilioNumber);
     if (!key) throw new Error("twilioNumber must contain digits");
 
-    const existing = cache.subscribers[key] ?? defaults(twilioNumber);
-    const next = {
-      ...existing,
-      ...patch,
-      twilioNumber: existing.twilioNumber,
-      activeHours: { ...existing.activeHours, ...(patch.activeHours ?? {}) },
-    };
-    validate(next);
+    const existing = cache.subscribers[key] ?? null;
+    const next = mergeSubscriber(existing, twilioNumber, patch);
     cache.subscribers[key] = next;
     persist();
     return next;
@@ -117,6 +112,17 @@ export function createStore(filePath) {
 }
 
 /** Shared by every backend, so validation cannot drift between them. */
+/**
+ * A per-subscriber credential.
+ *
+ * The operator API_KEY configures every number, so it can never be given to a
+ * customer. This lets each subscriber authenticate as itself, which is what
+ * the app needs in order to report a purchase or read its own settings.
+ */
+export function newApiToken() {
+  return crypto.randomBytes(24).toString("base64url");
+}
+
 export function defaults(twilioNumber) {
   return {
     twilioNumber,
@@ -125,6 +131,7 @@ export function defaults(twilioNumber) {
     message: DEFAULT_MESSAGE,
     timeZone: "UTC",
     activeHours: { startMinuteOfDay: 8 * 60, endMinuteOfDay: 18 * 60, alwaysOn: false },
+    apiToken: newApiToken(),
     replyCount: 0,
     unlimited: false,
     limit: FREE_TIER_LIMIT,
@@ -142,6 +149,10 @@ export function mergeSubscriber(existing, twilioNumber, patch) {
     ...patch,
     twilioNumber: base.twilioNumber,
     activeHours: { ...base.activeHours, ...(patch.activeHours ?? {}) },
+    // Backfilled rather than only set in defaults(), so subscribers created
+    // before tokens existed acquire one on their next write instead of being
+    // permanently unable to authenticate.
+    apiToken: base.apiToken || patch.apiToken || newApiToken(),
   };
   validate(next);
   return next;
