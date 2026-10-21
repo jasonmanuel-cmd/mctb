@@ -138,9 +138,9 @@ cannot unlock a second number.
 
 Note that `POST /billing/verify` is deliberately **not** behind the operator
 `API_KEY` — the app is the customer and must not hold the key that configures
-every number. Verification against Google is the authorisation. That does mean
-per-subscriber API tokens are still the missing piece for letting customers
-self-serve their own settings.
+every number. Verification against Google is the authorisation. Subscribers now have their
+own tokens, so a customer can self-serve their settings via `/me` without ever
+holding the operator key.
 
 ## 6. Handing a customer their token
 
