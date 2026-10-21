@@ -26,13 +26,19 @@ the live function has been observed.
 
 Two things still need doing in the dashboard:
 
-**Connect the Git repository for automatic deploys.** That build was created by
-API from a specific commit, not by a Git link, so pushes do not deploy on their
-own yet. In *Settings → Git*, connect `jasonmanuel-cmd/mctb` and confirm Root
-Directory is `server`.
+**The Git repository is already linked** — `jasonmanuel-cmd/mctb`, with
+automatic deployments enabled. This section said otherwise until the project was
+read back from the API; it was wrong.
 
-**Turn off Deployment Protection.** New Vercel projects enable SSO protection
-for all deployments except custom domains. Telnyx cannot authenticate through
+But note the **production branch is `main`**, and all of this work is on
+`arena/0ed3db2e-mctb`. Pushes to the branch therefore create *preview*
+deployments — two already exist, both READY — while
+`missed-call-reply.vercel.app` stays pinned to whatever was last promoted to
+production. **Merge the branch into `main` for production to track it.**
+
+**Turn off Deployment Protection — confirmed still on.** The project reads back
+`ssoProtection: all_except_custom_domains`. Until it is off, the URL below
+serves a Vercel login page and every Telnyx webhook gets a 401. Telnyx cannot authenticate through
 it, so **every webhook would receive a 401 and no call would ever be seen.**
 *Settings → Deployment Protection → Vercel Authentication → Off* (or restrict
 it to Preview deployments only).
