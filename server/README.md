@@ -115,6 +115,19 @@ signature URL as `publicBaseUrl + req.url`. Leaving `?__path=` attached would
 fail verification on **every** Twilio webhook: Twilio signs the URL it
 requested, not the rewritten one.
 
+Two things a real deployment's compiled route table showed, neither reachable
+from a local test:
+
+- `source` is compiled with **path-to-regexp**, which is stricter than the
+  RegExp constructor. A negative lookahead such as `/((?!api(/|$)).*)` is a
+  valid RegExp and was still rejected outright — *"Rewrite at index 0 has
+  invalid `source` pattern."* Stick to literal segments and `:params`; a test
+  now rejects anything else.
+- Vercel **percent-encodes the destination**, so the function receives
+  `?__path=%2Fvoice%2Fcompleted`. `searchParams.get` decodes it, but the
+  encoded form is tested explicitly rather than left to inference. Routes with
+  a `:param` also arrive with an extra `&number=` appended.
+
 Three things to get right on the project settings:
 
 - **Root Directory** must be `server`.

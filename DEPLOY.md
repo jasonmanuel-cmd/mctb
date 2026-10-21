@@ -11,17 +11,25 @@ from a checkout.
 | --- | --- |
 | Project name | `missed-call-reply` |
 | Project ID | `prj_0Mz2FtD8g8Np3BF3r7Ud7DrEXFoY` |
+| Production URL | `https://missed-call-reply.vercel.app` |
 | Root Directory | `server` (already set) |
 | `PROVIDER` | `telnyx` (already set) |
 | Node version | 24.x |
 | Region | `iad1` |
 
+**A production build has succeeded** — deployment
+`dpl_2ov9E33RQY2DptzPppik6W6Z7KRj`, status READY, built in 4.5s from commit
+`4d41202`. Packaging, ESM detection and function discovery are therefore
+confirmed. What is *not* confirmed is anything behind a request: the
+environment that built this cannot reach `*.vercel.app`, so no response from
+the live function has been observed.
+
 Two things still need doing in the dashboard:
 
-**Connect the Git repository.** The project was created without a Git link
-(the available API rejected both accepted shapes for it). In
-*Settings → Git*, connect `jasonmanuel-cmd/mctb` and confirm Root Directory is
-`server`. Without this, pushes do not deploy.
+**Connect the Git repository for automatic deploys.** That build was created by
+API from a specific commit, not by a Git link, so pushes do not deploy on their
+own yet. In *Settings → Git*, connect `jasonmanuel-cmd/mctb` and confirm Root
+Directory is `server`.
 
 **Turn off Deployment Protection.** New Vercel projects enable SSO protection
 for all deployments except custom domains. Telnyx cannot authenticate through
