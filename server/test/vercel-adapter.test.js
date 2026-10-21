@@ -299,34 +299,82 @@ const vercelConfig = JSON.parse(
   fs.readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
 );
 
-test("every app route is rewritten to the function with its path forwarded", () => {
-  const { source, destination } = vercelConfig.rewrites[0];
-  const re = new RegExp(`^${source}$`);
+/**
+ * Vercel compiles `source` with path-to-regexp, which is stricter than the
+ * RegExp constructor: a pattern like "/((?!api(/|$)).*)" builds a perfectly
+ * good RegExp locally and is still rejected by the platform at deploy time.
+ * These assert the mapping without relying on RegExp semantics matching
+ * Vercel's, and separately forbid the constructs that get rejected.
+ */
+function matchSource(source, path) {
+  const names = [];
+  const pattern = source
+    .split("/")
+    .map((seg) => {
+      if (seg.startsWith(":")) {
+        names.push(seg.slice(1));
+        return "([^/]+)";
+      }
+      return seg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    })
+    .join("/");
+  const m = new RegExp(`^${pattern}$`).exec(path);
+  if (!m) return null;
+  const params = {};
+  names.forEach((n, i) => {
+    params[n] = m[i + 1];
+  });
+  return params;
+}
 
+function resolveRewrite(path) {
+  for (const { source, destination } of vercelConfig.rewrites) {
+    const params = matchSource(source, path);
+    if (params) {
+      return destination.replace(/:([a-zA-Z_]+)/g, (_, k) => params[k]);
+    }
+  }
+  return null;
+}
+
+test("every app route is rewritten to the function with its path forwarded", () => {
   const expected = {
     "/": "/api?__path=/",
     "/healthz": "/api?__path=/healthz",
     "/voice": "/api?__path=/voice",
     "/voice/completed": "/api?__path=/voice/completed",
     "/panel": "/api?__path=/panel",
+    "/me": "/api?__path=/me",
+    "/billing/verify": "/api?__path=/billing/verify",
     "/subscribers": "/api?__path=/subscribers",
     "/subscribers/%2B15559000001": "/api?__path=/subscribers/%2B15559000001",
+    "/subscribers/%2B15559000001/token": "/api?__path=/subscribers/%2B15559000001/token",
   };
 
   for (const [path, want] of Object.entries(expected)) {
-    const m = re.exec(path);
-    assert.ok(m, `${path} should be rewritten`);
-    assert.equal(destination.replace("$1", m[1]), want);
+    assert.equal(resolveRewrite(path), want, `unexpected rewrite for ${path}`);
   }
 });
 
-test("the /api function path is excluded from the rewrite", () => {
-  const { source } = vercelConfig.rewrites[0];
-  const re = new RegExp(`^${source}$`);
-  // A bare `api/` lookahead lets /api itself match, which rewrites the
-  // function onto itself. Both forms must fall through to the function.
-  assert.equal(re.test("/api"), false, "/api must not be rewritten");
-  assert.equal(re.test("/api/foo"), false, "/api/foo must not be rewritten");
+test("the /api function path is not rewritten onto itself", () => {
+  assert.equal(resolveRewrite("/api"), null, "/api must reach the function directly");
+  assert.equal(resolveRewrite("/api/foo"), null, "/api/foo must reach the function directly");
+});
+
+test("rewrite sources use only constructs Vercel's parser accepts", () => {
+  // Regression guard. A negative lookahead passed every local RegExp test and
+  // was still refused by the platform: "Rewrite at index 0 has invalid
+  // `source` pattern". Only literal segments and :params are safe.
+  for (const { source } of vercelConfig.rewrites) {
+    for (const segment of source.split("/")) {
+      if (!segment || segment.startsWith(":")) continue;
+      assert.ok(
+        /^[A-Za-z0-9_.\-%]+$/.test(segment),
+        `source segment "${segment}" in "${source}" uses characters ` +
+          "path-to-regexp may reject; use a literal or a :param",
+      );
+    }
+  }
 });
 
 test("the function is configured with a sane memory and duration", () => {

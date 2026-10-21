@@ -1,6 +1,6 @@
 # Deploying Missed Call Reply
 
-Status as of this branch: the server is complete and tested (**120 tests**,
+Status as of this branch: the server is complete and tested (**121 tests**,
 `cd server && npm test`). What follows is everything that still needs a human,
 because each step needs credentials or account access that cannot be handled
 from a checkout.

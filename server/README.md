@@ -9,12 +9,12 @@ Android app.
 - Zero runtime dependencies. `node:http`, `node:crypto`, global `fetch`.
 - Node 20+.
 - Works with **Twilio or Telnyx** behind one provider seam.
-- 120 tests, including integration tests over real sockets with real webhook
+- 121 tests, including integration tests over real sockets with real webhook
   signatures (HMAC-SHA1 for Twilio, Ed25519 for Telnyx). No mocking of the HTTP
   layer, no network access needed to run them.
 
 ```
-npm test      # 120 tests, ~1.2s
+npm test      # 121 tests, ~1.2s
 npm start     # needs the env vars below
 ```
 

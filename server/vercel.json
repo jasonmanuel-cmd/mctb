@@ -1,10 +1,17 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
-    {
-      "source": "/((?!api(/|$)).*)",
-      "destination": "/api?__path=/$1"
-    }
+    { "source": "/", "destination": "/api?__path=/" },
+    { "source": "/healthz", "destination": "/api?__path=/healthz" },
+    { "source": "/voice", "destination": "/api?__path=/voice" },
+    { "source": "/voice/completed", "destination": "/api?__path=/voice/completed" },
+    { "source": "/panel", "destination": "/api?__path=/panel" },
+    { "source": "/panel/", "destination": "/api?__path=/panel" },
+    { "source": "/me", "destination": "/api?__path=/me" },
+    { "source": "/billing/verify", "destination": "/api?__path=/billing/verify" },
+    { "source": "/subscribers", "destination": "/api?__path=/subscribers" },
+    { "source": "/subscribers/:number", "destination": "/api?__path=/subscribers/:number" },
+    { "source": "/subscribers/:number/token", "destination": "/api?__path=/subscribers/:number/token" }
   ],
   "functions": {
     "api/index.js": {
