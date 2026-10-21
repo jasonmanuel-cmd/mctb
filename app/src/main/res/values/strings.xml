@@ -82,6 +82,15 @@
     <!-- Errors -->
     <string name="error_no_messaging_app">No messaging app found to send the reply</string>
 
+    <!-- Server connection -->
+    <string name="server_card_title">Reply server</string>
+    <string name="server_card_body">Replies are sent by the server, so it has to know about your upgrade. Enter the address and token you were given.</string>
+    <string name="server_url_label">Server address</string>
+    <string name="server_token_label">Your token</string>
+    <string name="server_save">Save</string>
+    <string name="server_saved">Server details saved</string>
+    <string name="server_incomplete">Enter both the address and the token</string>
+
     <!-- Common -->
     <string name="ok">OK</string>
     <string name="cancel">Cancel</string>

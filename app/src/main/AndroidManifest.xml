@@ -31,6 +31,13 @@
     <!-- Play Billing. -->
     <uses-permission android:name="com.android.vending.BILLING" />
 
+    <!--
+        Reporting a purchase to the reply server. Normal permission, so no
+        runtime prompt and no Play declaration required - but without it the
+        call throws SecurityException rather than failing gracefully.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- The app is meaningless on a device with no telephony radio. -->
     <uses-feature
         android:name="android.hardware.telephony"

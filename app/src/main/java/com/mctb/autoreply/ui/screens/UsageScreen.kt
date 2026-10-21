@@ -26,6 +26,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -63,7 +68,11 @@ fun UsageScreen(navController: NavController) {
     // Billing needs an Activity. If we somehow cannot find one, fall back to a
     // static "unavailable" offer rather than crashing the screen.
     val activity = remember(context) { context.findActivity() }
-    val billing = remember(activity) { activity?.let { BillingManager(it) } }
+    // remember on both: the manager holds a coroutine scope and a billing
+    // connection, so it must not be rebuilt on every recomposition.
+    val billing = remember(activity, prefs) {
+        activity?.let { BillingManager(it, prefs) }
+    }
     val offerFlow = remember(billing) {
         billing?.offer ?: MutableStateFlow<UnlockOffer>(
             UnlockOffer.Unavailable("no activity")
@@ -120,6 +129,92 @@ fun UsageScreen(navController: NavController) {
                 is UnlockOffer.Loading -> LoadingCard()
 
                 is UnlockOffer.Unavailable -> UnavailableCard(onRetry = { billing?.start() })
+            }
+
+            ServerCard(prefs = prefs)
+        }
+    }
+}
+
+/**
+ * Where the reply server is, and this subscriber's token.
+ *
+ * Replies are sent by the server, so an upgrade bought here does nothing until
+ * the server knows about it. These two values are what
+ * [com.mctb.autoreply.billing.BillingManager] posts the purchase token with.
+ */
+@Composable
+private fun ServerCard(prefs: AppPreferences) {
+    val scope = rememberCoroutineScope()
+    val savedUrl by prefs.serverBaseUrl.collectAsState(initial = "")
+    val savedToken by prefs.apiToken.collectAsState(initial = "")
+
+    var url by remember(savedUrl) { mutableStateOf(savedUrl) }
+    var token by remember(savedToken) { mutableStateOf(savedToken) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+
+    // stringResource is @Composable, so it cannot be called from the coroutine
+    // below. Hoisted here instead.
+    val savedMessage = stringResource(R.string.server_saved)
+    val incompleteMessage = stringResource(R.string.server_incomplete)
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = stringResource(R.string.server_card_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = stringResource(R.string.server_card_body),
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            OutlinedTextField(
+                value = url,
+                onValueChange = {
+                    url = it
+                    feedback = null
+                },
+                label = { Text(stringResource(R.string.server_url_label)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedTextField(
+                value = token,
+                onValueChange = {
+                    token = it
+                    feedback = null
+                },
+                label = { Text(stringResource(R.string.server_token_label)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Button(
+                onClick = {
+                    if (url.isBlank() || token.isBlank()) {
+                        feedback = incompleteMessage
+                    } else {
+                        scope.launch {
+                            prefs.setServerConfig(url, token)
+                            feedback = savedMessage
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(stringResource(R.string.server_save))
+            }
+
+            feedback?.let {
+                Text(text = it, style = MaterialTheme.typography.bodySmall)
             }
         }
     }

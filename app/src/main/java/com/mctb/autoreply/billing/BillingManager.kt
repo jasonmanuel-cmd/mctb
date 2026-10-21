@@ -13,9 +13,18 @@ import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.PurchasesUpdatedListener
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
+import com.mctb.autoreply.data.AppPreferences
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 /** What the upgrade screen should show right now. */
 sealed interface UnlockOffer {
@@ -54,21 +63,24 @@ sealed interface UnlockOffer {
  * acknowledged" on-device, which proves nothing to anyone else - a purchase
  * token can be lifted off a rooted device and replayed.
  *
- * The server now has the authoritative check (`POST /billing/verify`, which
- * asks the Play Developer API whether the token is real and still purchased
- * before lifting the limit). This class does not call it yet: that needs a
- * configured server base URL, which is not plumbed through preferences. Until
- * it is, an unlock applies on this device only and does not lift the limit for
- * server-mode replies.
+ * A purchase is reported to the server (`POST /billing/verify`) so the limit
+ * is lifted where the replies are actually sent. The server re-checks the token
+ * against the Play Developer API; it does not trust this app's word for it.
+ * The server origin and this subscriber's token come from [AppPreferences], so
+ * nothing is reported until both are configured.
  */
 class BillingManager(
-    private val activity: Activity
+    private val activity: Activity,
+    private val prefs: AppPreferences
 ) : PurchasesUpdatedListener {
 
     private val _offer = MutableStateFlow<UnlockOffer>(UnlockOffer.Loading)
     val offer: StateFlow<UnlockOffer> = _offer.asStateFlow()
 
     private var cachedDetails: ProductDetails? = null
+
+    /** IO work that must outlive any single composable, cancelled in [release]. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val billingClient: BillingClient = BillingClient.newBuilder(activity)
         .setListener(this)
@@ -113,6 +125,7 @@ class BillingManager(
             val owned = purchases.firstOrNull { it.isEntitlementForUnlock() }
             if (owned != null) {
                 acknowledgeIfNeeded(owned)
+                reportPurchaseToServer(owned)
                 _offer.value = UnlockOffer.Owned
             }
         }
@@ -205,6 +218,7 @@ class BillingManager(
                 val purchased = purchases?.firstOrNull { it.isEntitlementForUnlock() }
                 if (purchased != null) {
                     acknowledgeIfNeeded(purchased)
+                    reportPurchaseToServer(purchased)
                     _offer.value = UnlockOffer.Owned
                 }
             }
@@ -236,7 +250,57 @@ class BillingManager(
         purchaseState == Purchase.PurchaseState.PURCHASED &&
             products.contains(PRODUCT_ID_UNLIMITED)
 
+    /**
+     * Tells the server about the purchase so it lifts the limit there as well.
+     *
+     * This is the step that makes the upgrade real: the server is what sends
+     * the replies, so an unlock that only flipped a flag on this device would
+     * unlock nothing. The purchase token is sent to `POST /billing/verify`,
+     * which asks the Play Developer API whether it is genuine before granting
+     * anything - the server never trusts the app's word for it.
+     *
+     * Failures are logged, not surfaced. Play has already recorded the purchase
+     * and [restoreExistingPurchase] re-runs on every launch, so a dropped
+     * report is retried rather than lost.
+     */
+    private fun reportPurchaseToServer(purchase: Purchase) {
+        scope.launch {
+            val config = prefs.readServerConfig()
+            if (config == null) {
+                Log.i(TAG, "No server configured; purchase not reported")
+                return@launch
+            }
+
+            var connection: HttpURLConnection? = null
+            try {
+                connection = URL(config.baseUrl + "/billing/verify")
+                    .openConnection() as HttpURLConnection
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("Authorization", "Bearer " + config.apiToken)
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 15_000
+                connection.doOutput = true
+
+                val body = JSONObject().put("purchaseToken", purchase.purchaseToken).toString()
+                connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+
+                when (val code = connection.responseCode) {
+                    HttpURLConnection.HTTP_OK -> Log.i(TAG, "Purchase verified by server")
+                    else -> Log.w(TAG, "Server declined the purchase report: HTTP $code")
+                }
+            } catch (e: Exception) {
+                // Reached nobody, or the response was not HTTP. Not fatal: the
+                // next launch tries again.
+                Log.w(TAG, "Could not report purchase to the server", e)
+            } finally {
+                connection?.disconnect()
+            }
+        }
+    }
+
     fun release() {
+        scope.cancel()
         if (billingClient.isReady) billingClient.endConnection()
     }
 

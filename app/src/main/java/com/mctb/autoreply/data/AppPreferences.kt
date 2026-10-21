@@ -63,6 +63,8 @@ class AppPreferences(private val context: Context) {
         private val KEY_REPLY_COUNT = intPreferencesKey("reply_count")
         private val KEY_IS_UNLIMITED = booleanPreferencesKey("is_unlimited")
         private val KEY_DEBOUNCE_LEDGER = stringPreferencesKey("debounce_ledger")
+        private val KEY_SERVER_BASE_URL = stringPreferencesKey("server_base_url")
+        private val KEY_API_TOKEN = stringPreferencesKey("api_token")
 
         const val DEFAULT_MESSAGE =
             "Hi! I missed your call - I'm on the job right now. I'll call you back as soon as I can. Thanks!"
@@ -118,6 +120,12 @@ class AppPreferences(private val context: Context) {
     val replyCount: Flow<Int> = safeData.map { it[KEY_REPLY_COUNT] ?: 0 }
 
     val isUnlimited: Flow<Boolean> = safeData.map { it[KEY_IS_UNLIMITED] ?: false }
+
+    /** Origin of the reply server, e.g. https://missed-call-reply.vercel.app */
+    val serverBaseUrl: Flow<String> = safeData.map { it[KEY_SERVER_BASE_URL] ?: "" }
+
+    /** This subscriber's own credential. Not the operator API key. */
+    val apiToken: Flow<String> = safeData.map { it[KEY_API_TOKEN] ?: "" }
 
     /**
      * Single read of the whole configuration. Used by the background path so one
@@ -184,6 +192,35 @@ class AppPreferences(private val context: Context) {
     }
 
     /**
+     * Stores where the server is and how to authenticate to it.
+     *
+     * Both are written in one `edit` so the app can never hold a token pointed
+     * at the wrong origin. Trailing slashes are stripped because the server
+     * concatenates this with a path to build webhook signature URLs.
+     */
+    suspend fun setServerConfig(baseUrl: String, token: String) {
+        context.dataStore.edit {
+            it[KEY_SERVER_BASE_URL] = baseUrl.trim().trimEnd('/')
+            it[KEY_API_TOKEN] = token.trim()
+        }
+    }
+
+    /**
+     * One read of both server values, for callers that need them together.
+     *
+     * Returns null when either is missing: a half-configured server is not
+     * usable, and reporting that as "configured" would produce a confusing
+     * network failure instead of a clear "not set up yet".
+     */
+    suspend fun readServerConfig(): ServerConfig? {
+        val prefs = safeData.first()
+        val url = prefs[KEY_SERVER_BASE_URL]?.trim()?.trimEnd('/') ?: ""
+        val token = prefs[KEY_API_TOKEN]?.trim() ?: ""
+        if (url.isEmpty() || token.isEmpty()) return null
+        return ServerConfig(baseUrl = url, apiToken = token)
+    }
+
+    /**
      * Consumes one unit of quota and closes the cooldown for [number] atomically.
      *
      * Both happen in one `edit` so a crash between them cannot bill the user a
@@ -211,6 +248,9 @@ class AppPreferences(private val context: Context) {
             calendar.get(Calendar.MINUTE)
         )
 }
+
+/** Where the reply server is, and the credential for this subscriber. */
+data class ServerConfig(val baseUrl: String, val apiToken: String)
 
 /** Free-tier status derived from a [ReplySettings] snapshot. */
 data class Quota(val used: Int, val isUnlimited: Boolean) {
