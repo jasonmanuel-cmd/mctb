@@ -5,24 +5,54 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.mctb.autoreply.domain.ActiveHours
+import com.mctb.autoreply.domain.DebounceLedger
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 import java.util.Calendar
 
 /**
- * DataStore-based preferences manager for app settings.
- * Provides type-safe access to all app configuration and state.
+ * Single DataStore instance for the whole process.
+ *
+ * Declared at file top level (not inside a class or companion object) so every
+ * accessor provably shares one instance - creating a second `DataStore` for the
+ * same file throws `IllegalStateException` at runtime.
+ */
+private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "auto_reply_preferences"
+)
+
+/**
+ * Everything the background path needs to decide whether to prompt for a reply,
+ * read as one atomic snapshot.
+ */
+data class ReplySettings(
+    val enabled: Boolean,
+    val message: String,
+    val activeHours: ActiveHours,
+    val replyCount: Int,
+    val isUnlimited: Boolean,
+    val debounceLedger: String?
+)
+
+/**
+ * Type-safe access to app configuration.
+ *
+ * Every one-shot read uses `Flow.first()`. The previous implementation used
+ * `Flow.collect { }`, which never returns: `DataStore.data` emits the current
+ * value and then stays open emitting subsequent changes, so those helpers
+ * suspended forever and the send path never executed past its first line.
  */
 class AppPreferences(private val context: Context) {
 
     companion object {
-        private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "app_preferences")
-
-        // Preference keys
         private val KEY_ENABLED = booleanPreferencesKey("enabled")
         private val KEY_MESSAGE = stringPreferencesKey("message")
         private val KEY_START_HOUR = intPreferencesKey("start_hour")
@@ -30,67 +60,122 @@ class AppPreferences(private val context: Context) {
         private val KEY_END_HOUR = intPreferencesKey("end_hour")
         private val KEY_END_MINUTE = intPreferencesKey("end_minute")
         private val KEY_ALWAYS_ON = booleanPreferencesKey("always_on")
-        private val KEY_AUTO_TEXT_COUNT = intPreferencesKey("auto_text_count")
+        private val KEY_REPLY_COUNT = intPreferencesKey("reply_count")
         private val KEY_IS_UNLIMITED = booleanPreferencesKey("is_unlimited")
+        private val KEY_DEBOUNCE_LEDGER = stringPreferencesKey("debounce_ledger")
 
-        // Default values
-        const val DEFAULT_MESSAGE = "Hi! I missed your call and I'm working right now. I'll call you back as soon as I can. Thanks!"
+        const val DEFAULT_MESSAGE =
+            "Hi! I missed your call - I'm on the job right now. I'll call you back as soon as I can. Thanks!"
         const val DEFAULT_START_HOUR = 8
         const val DEFAULT_START_MINUTE = 0
         const val DEFAULT_END_HOUR = 18
         const val DEFAULT_END_MINUTE = 0
+
+        /** Reply prompts included before the unlimited upgrade. */
         const val FREE_TIER_LIMIT = 5
-        const val DEBOUNCE_WINDOW_MS = 30 * 60 * 1000L // 30 minutes
+
+        /** Cooldown per caller. */
+        const val DEBOUNCE_WINDOW_MS = 30 * 60 * 1000L
+
+        /** Hard cap on the message; one GSM segment. */
+        const val MAX_MESSAGE_LENGTH = 160
     }
 
-    // Flows for reactive UI updates
-    val isEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_ENABLED] ?: false }
-    val message: Flow<String> = context.dataStore.data.map { it[KEY_MESSAGE] ?: DEFAULT_MESSAGE }
-    val startHour: Flow<Int> = context.dataStore.data.map { it[KEY_START_HOUR] ?: DEFAULT_START_HOUR }
-    val startMinute: Flow<Int> = context.dataStore.data.map { it[KEY_START_MINUTE] ?: DEFAULT_START_MINUTE }
-    val endHour: Flow<Int> = context.dataStore.data.map { it[KEY_END_HOUR] ?: DEFAULT_END_HOUR }
-    val endMinute: Flow<Int> = context.dataStore.data.map { it[KEY_END_MINUTE] ?: DEFAULT_END_MINUTE }
-    val isAlwaysOn: Flow<Boolean> = context.dataStore.data.map { it[KEY_ALWAYS_ON] ?: false }
-    val autoTextCount: Flow<Int> = context.dataStore.data.map { it[KEY_AUTO_TEXT_COUNT] ?: 0 }
-    val isUnlimited: Flow<Boolean> = context.dataStore.data.map { it[KEY_IS_UNLIMITED] ?: false }
+    /**
+     * `DataStore.data` can throw `IOException` on a corrupt file. Falling back to
+     * [emptyPreferences] means a damaged file degrades to defaults instead of
+     * crashing a background receiver.
+     */
+    private val safeData: Flow<Preferences> = context.dataStore.data
+        .catch { throwable ->
+            if (throwable is IOException) emit(emptyPreferences()) else throw throwable
+        }
 
-    // Combined flow for usage status
-    val usageStatus: Flow<UsageStatus> = context.dataStore.data.map { prefs ->
-        val count = prefs[KEY_AUTO_TEXT_COUNT] ?: 0
-        val unlimited = prefs[KEY_IS_UNLIMITED] ?: false
-        UsageStatus(count, unlimited)
+    // ---------------------------------------------------------------------
+    // Reactive views for the UI
+    // ---------------------------------------------------------------------
+
+    val isEnabled: Flow<Boolean> = safeData.map { it[KEY_ENABLED] ?: false }
+
+    val message: Flow<String> = safeData.map { it[KEY_MESSAGE] ?: DEFAULT_MESSAGE }
+
+    val isAlwaysOn: Flow<Boolean> = safeData.map { it[KEY_ALWAYS_ON] ?: false }
+
+    val startMinuteOfDay: Flow<Int> = safeData.map {
+        ActiveHours.minuteOfDay(
+            it[KEY_START_HOUR] ?: DEFAULT_START_HOUR,
+            it[KEY_START_MINUTE] ?: DEFAULT_START_MINUTE
+        )
     }
 
-    // Suspend functions for write operations
+    val endMinuteOfDay: Flow<Int> = safeData.map {
+        ActiveHours.minuteOfDay(
+            it[KEY_END_HOUR] ?: DEFAULT_END_HOUR,
+            it[KEY_END_MINUTE] ?: DEFAULT_END_MINUTE
+        )
+    }
+
+    val replyCount: Flow<Int> = safeData.map { it[KEY_REPLY_COUNT] ?: 0 }
+
+    val isUnlimited: Flow<Boolean> = safeData.map { it[KEY_IS_UNLIMITED] ?: false }
+
+    /**
+     * Single read of the whole configuration. Used by the background path so one
+     * DataStore round-trip serves the entire decision.
+     */
+    suspend fun readSettings(): ReplySettings {
+        val prefs = safeData.first()
+        val startHour = prefs[KEY_START_HOUR] ?: DEFAULT_START_HOUR
+        val startMinute = prefs[KEY_START_MINUTE] ?: DEFAULT_START_MINUTE
+        val endHour = prefs[KEY_END_HOUR] ?: DEFAULT_END_HOUR
+        val endMinute = prefs[KEY_END_MINUTE] ?: DEFAULT_END_MINUTE
+
+        return ReplySettings(
+            enabled = prefs[KEY_ENABLED] ?: false,
+            message = prefs[KEY_MESSAGE] ?: DEFAULT_MESSAGE,
+            activeHours = ActiveHours(
+                startMinuteOfDay = ActiveHours.minuteOfDay(startHour, startMinute),
+                endMinuteOfDay = ActiveHours.minuteOfDay(endHour, endMinute),
+                alwaysOn = prefs[KEY_ALWAYS_ON] ?: false
+            ),
+            replyCount = prefs[KEY_REPLY_COUNT] ?: 0,
+            isUnlimited = prefs[KEY_IS_UNLIMITED] ?: false,
+            debounceLedger = prefs[KEY_DEBOUNCE_LEDGER]
+        )
+    }
+
+    // ---------------------------------------------------------------------
+    // Writes
+    // ---------------------------------------------------------------------
+
     suspend fun setEnabled(enabled: Boolean) {
         context.dataStore.edit { it[KEY_ENABLED] = enabled }
     }
 
     suspend fun setMessage(message: String) {
-        context.dataStore.edit { it[KEY_MESSAGE] = message }
+        context.dataStore.edit {
+            it[KEY_MESSAGE] = message.take(MAX_MESSAGE_LENGTH)
+        }
     }
 
     suspend fun resetMessageToDefault() {
         context.dataStore.edit { it[KEY_MESSAGE] = DEFAULT_MESSAGE }
     }
 
-    suspend fun setActiveHours(startHour: Int, startMinute: Int, endHour: Int, endMinute: Int) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_START_HOUR] = startHour
-            prefs[KEY_START_MINUTE] = startMinute
-            prefs[KEY_END_HOUR] = endHour
-            prefs[KEY_END_MINUTE] = endMinute
-        }
-    }
-
     suspend fun setAlwaysOn(alwaysOn: Boolean) {
         context.dataStore.edit { it[KEY_ALWAYS_ON] = alwaysOn }
     }
 
-    suspend fun incrementAutoTextCount() {
+    /**
+     * @param startMinuteOfDay inclusive window start, minutes since midnight
+     * @param endMinuteOfDay   exclusive window end, minutes since midnight
+     */
+    suspend fun setActiveHours(startMinuteOfDay: Int, endMinuteOfDay: Int) {
         context.dataStore.edit { prefs ->
-            val current = prefs[KEY_AUTO_TEXT_COUNT] ?: 0
-            prefs[KEY_AUTO_TEXT_COUNT] = current + 1
+            prefs[KEY_START_HOUR] = startMinuteOfDay / 60
+            prefs[KEY_START_MINUTE] = startMinuteOfDay % 60
+            prefs[KEY_END_HOUR] = endMinuteOfDay / 60
+            prefs[KEY_END_MINUTE] = endMinuteOfDay % 60
         }
     }
 
@@ -98,106 +183,38 @@ class AppPreferences(private val context: Context) {
         context.dataStore.edit { it[KEY_IS_UNLIMITED] = unlimited }
     }
 
-    // Synchronous read helpers for background service/receiver
-    suspend fun isEnabledSync(): Boolean {
-        var enabled = false
-        context.dataStore.data.map { it[KEY_ENABLED] ?: false }.collect { enabled = it }
-        return enabled
-    }
-
-    suspend fun getMessageSync(): String {
-        var msg = DEFAULT_MESSAGE
-        context.dataStore.data.map { it[KEY_MESSAGE] ?: DEFAULT_MESSAGE }.collect { msg = it }
-        return msg
-    }
-
-    suspend fun isAlwaysOnSync(): Boolean {
-        var alwaysOn = false
-        context.dataStore.data.map { it[KEY_ALWAYS_ON] ?: false }.collect { alwaysOn = it }
-        return alwaysOn
-    }
-
-    suspend fun isUnlimitedSync(): Boolean {
-        var unlimited = false
-        context.dataStore.data.map { it[KEY_IS_UNLIMITED] ?: false }.collect { unlimited = it }
-        return unlimited
-    }
-
-    suspend fun getAutoTextCountSync(): Int {
-        var count = 0
-        context.dataStore.data.map { it[KEY_AUTO_TEXT_COUNT] ?: 0 }.collect { count = it }
-        return count
-    }
-
     /**
-     * Check if we've reached the free tier limit.
+     * Consumes one unit of quota and closes the cooldown for [number] atomically.
+     *
+     * Both happen in one `edit` so a crash between them cannot bill the user a
+     * prompt without recording the debounce, or vice versa.
      */
-    suspend fun hasReachedLimit(): Boolean {
-        val unlimited = isUnlimitedSync()
-        val count = getAutoTextCountSync()
-        return !unlimited && count >= FREE_TIER_LIMIT
-    }
-
-    /**
-     * Check if current time is within active hours.
-     */
-    suspend fun isWithinActiveHours(): Boolean {
-        if (isAlwaysOnSync()) return true
-
-        val calendar = Calendar.getInstance()
-        val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
-        val currentMinute = calendar.get(Calendar.MINUTE)
-        val currentTimeInMinutes = currentHour * 60 + currentMinute
-
-        var start = 0
-        var end = 0
-        context.dataStore.data.map { prefs ->
-            val startH = prefs[KEY_START_HOUR] ?: DEFAULT_START_HOUR
-            val startM = prefs[KEY_START_MINUTE] ?: DEFAULT_START_MINUTE
-            val endH = prefs[KEY_END_HOUR] ?: DEFAULT_END_HOUR
-            val endM = prefs[KEY_END_MINUTE] ?: DEFAULT_END_MINUTE
-            start = startH * 60 + startM
-            end = endH * 60 + endM
-        }.collect { }
-
-        return if (start < end) {
-            // Normal case: e.g., 8:00 AM to 6:00 PM
-            currentTimeInMinutes in start until end
-        } else {
-            // Crosses midnight: e.g., 10:00 PM to 2:00 AM
-            currentTimeInMinutes >= start || currentTimeInMinutes < end
+    suspend fun consumeReplyFor(number: String, nowMs: Long) {
+        context.dataStore.edit { prefs ->
+            val unlimited = prefs[KEY_IS_UNLIMITED] ?: false
+            if (!unlimited) {
+                prefs[KEY_REPLY_COUNT] = (prefs[KEY_REPLY_COUNT] ?: 0) + 1
+            }
+            prefs[KEY_DEBOUNCE_LEDGER] = DebounceLedger.record(
+                encoded = prefs[KEY_DEBOUNCE_LEDGER],
+                number = number,
+                nowMs = nowMs,
+                windowMs = DEBOUNCE_WINDOW_MS
+            )
         }
     }
 
-    /**
-     * Debounce tracking - store last text time per phone number.
-     */
-    suspend fun canSendToNumber(phoneNumber: String): Boolean {
-        val lastTextTime = getLastTextTime(phoneNumber)
-        val currentTime = System.currentTimeMillis()
-        return (currentTime - lastTextTime) > DEBOUNCE_WINDOW_MS
-    }
-
-    suspend fun recordTextSent(phoneNumber: String) {
-        val key = longPreferencesKey("last_text_${phoneNumber.filter { it.isDigit() }}")
-        context.dataStore.edit { it[key] = System.currentTimeMillis() }
-    }
-
-    private suspend fun getLastTextTime(phoneNumber: String): Long {
-        val key = longPreferencesKey("last_text_${phoneNumber.filter { it.isDigit() }}")
-        var time = 0L
-        context.dataStore.data.map { it[key] ?: 0L }.collect { time = it }
-        return time
-    }
+    /** Current minute of the day in the device's local time zone. */
+    fun currentMinuteOfDay(calendar: Calendar = Calendar.getInstance()): Int =
+        ActiveHours.minuteOfDay(
+            calendar.get(Calendar.HOUR_OF_DAY),
+            calendar.get(Calendar.MINUTE)
+        )
 }
 
-/**
- * Data class representing usage status.
- */
-data class UsageStatus(
-    val count: Int,
-    val isUnlimited: Boolean
-) {
-    val hasReachedLimit: Boolean
-        get() = !isUnlimited && count >= AppPreferences.FREE_TIER_LIMIT
+/** Free-tier status derived from a [ReplySettings] snapshot. */
+data class Quota(val used: Int, val isUnlimited: Boolean) {
+    val limit: Int get() = AppPreferences.FREE_TIER_LIMIT
+    val isExhausted: Boolean get() = !isUnlimited && used >= limit
+    val remaining: Int get() = if (isUnlimited) Int.MAX_VALUE else (limit - used).coerceAtLeast(0)
 }

@@ -2,15 +2,39 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Required permissions for detecting missed calls and sending SMS -->
+    <!--
+        Permission set is deliberately minimal.
+
+        Deliberately ABSENT, and why:
+          SEND_SMS / READ_SMS        - restricted group; Play limits these to the
+                                       registered default SMS/Phone/Assistant handler.
+                                       Replies are handed to the user's own messaging
+                                       app via ACTION_SENDTO instead.
+          READ_CALL_LOG              - restricted group; also what populates
+                                       EXTRA_INCOMING_NUMBER. Caller id comes from
+                                       CallScreeningService instead.
+          FOREGROUND_SERVICE*        - a phoneCall foreground service requires
+                                       MANAGE_OWN_CALLS or the default dialer role on
+                                       API 34+, and cannot be started from
+                                       BOOT_COMPLETED at all on API 35+. A manifest
+                                       receiver for PHONE_STATE needs no service.
+          RECEIVE_BOOT_COMPLETED     - nothing to restart; receivers are re-registered
+                                       by the system on every boot.
+    -->
+
+    <!-- Call state transitions (RINGING / OFFHOOK / IDLE). Not a restricted group. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.READ_CALL_LOG" />
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+
+    <!-- Posting the reply prompt on API 33+. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Play Billing. -->
+    <uses-permission android:name="com.android.vending.BILLING" />
+
+    <!-- The app is meaningless on a device with no telephony radio. -->
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="true" />
 
     <application
         android:allowBackup="true"
@@ -23,7 +47,6 @@
         android:theme="@style/Theme.MissedCallAutoReply"
         tools:targetApi="35">
 
-        <!-- Main Activity -->
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
@@ -36,16 +59,25 @@
             </intent-filter>
         </activity>
 
-        <!-- Foreground Service for Call Monitoring -->
-        <service
-            android:name=".service.CallMonitorService"
-            android:enabled="true"
+        <!--
+            Invisible trampoline from the notification's "Send reply" action to the
+            user's messaging app. exported=false: only our own PendingIntent
+            launches it. Launched by a user tap, so it is exempt from background
+            activity start restrictions.
+        -->
+        <activity
+            android:name=".reply.ReplyActivity"
+            android:excludeFromRecents="true"
             android:exported="false"
-            android:foregroundServiceType="phoneCall" />
+            android:taskAffinity=""
+            android:theme="@style/Theme.MissedCallAutoReply.Transparent" />
 
-        <!-- Call State Receiver -->
+        <!--
+            Protected system broadcast, delivered to manifest receivers even when
+            the process is dead. This is what replaces the old foreground service.
+        -->
         <receiver
-            android:name=".receiver.CallReceiver"
+            android:name=".receiver.PhoneStateReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>
@@ -53,15 +85,20 @@
             </intent-filter>
         </receiver>
 
-        <!-- Boot Receiver to restart service after device reboot -->
-        <receiver
-            android:name=".receiver.BootReceiver"
+        <!--
+            Caller id source. Bound by the framework only while the user has
+            granted ROLE_CALL_SCREENING, which is requested in-app via RoleManager.
+            BIND_SCREENING_SERVICE is what stops other apps binding to us.
+        -->
+        <service
+            android:name=".screening.ReplyScreeningService"
             android:enabled="true"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.BIND_SCREENING_SERVICE">
             <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.telecom.CallScreeningService" />
             </intent-filter>
-        </receiver>
+        </service>
 
     </application>
 
