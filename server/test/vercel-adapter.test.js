@@ -287,3 +287,52 @@ test("a real query string survives alongside the forwarded path", async () => {
     assert.equal(JSON.parse(res.payload).forwardTo, "+15558000002");
   });
 });
+
+// ---------------------------------------------------------------------------
+// vercel.json itself
+//
+// The routing config is not exercised by any runtime test, so a broken rewrite
+// would ship silently. These assert the mapping directly.
+// ---------------------------------------------------------------------------
+
+const vercelConfig = JSON.parse(
+  fs.readFileSync(new URL("../vercel.json", import.meta.url), "utf8"),
+);
+
+test("every app route is rewritten to the function with its path forwarded", () => {
+  const { source, destination } = vercelConfig.rewrites[0];
+  const re = new RegExp(`^${source}$`);
+
+  const expected = {
+    "/": "/api?__path=/",
+    "/healthz": "/api?__path=/healthz",
+    "/voice": "/api?__path=/voice",
+    "/voice/completed": "/api?__path=/voice/completed",
+    "/panel": "/api?__path=/panel",
+    "/subscribers": "/api?__path=/subscribers",
+    "/subscribers/%2B15559000001": "/api?__path=/subscribers/%2B15559000001",
+  };
+
+  for (const [path, want] of Object.entries(expected)) {
+    const m = re.exec(path);
+    assert.ok(m, `${path} should be rewritten`);
+    assert.equal(destination.replace("$1", m[1]), want);
+  }
+});
+
+test("the /api function path is excluded from the rewrite", () => {
+  const { source } = vercelConfig.rewrites[0];
+  const re = new RegExp(`^${source}$`);
+  // A bare `api/` lookahead lets /api itself match, which rewrites the
+  // function onto itself. Both forms must fall through to the function.
+  assert.equal(re.test("/api"), false, "/api must not be rewritten");
+  assert.equal(re.test("/api/foo"), false, "/api/foo must not be rewritten");
+});
+
+test("the function is configured with a sane memory and duration", () => {
+  const fn = vercelConfig.functions["api/index.js"];
+  assert.ok(fn, "api/index.js must have a functions entry");
+  assert.ok(fn.memory >= 128 && fn.memory <= 1024);
+  // Must stay within the hobby plan ceiling.
+  assert.ok(fn.maxDuration <= 60, "maxDuration exceeds the hobby plan limit");
+});
