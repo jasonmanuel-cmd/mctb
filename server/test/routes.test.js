@@ -9,6 +9,7 @@ import { computeTwilioSignature } from "../src/signature.js";
 import { minuteOfDay } from "../src/policy.js";
 import { createApp } from "../src/routes.js";
 import { createStore } from "../src/store.js";
+import { createProvider } from "../src/provider.js";
 
 const AUTH_TOKEN = "test_auth_token_0000000000000000";
 const ACCOUNT_SID = "AC0000000000000000000000000000aa";
@@ -31,6 +32,7 @@ function startServer(overrides = {}) {
   };
 
   const config = {
+    provider: "twilio",
     twilioAccountSid: ACCOUNT_SID,
     twilioAuthToken: AUTH_TOKEN,
     publicBaseUrl: BASE,
@@ -42,7 +44,9 @@ function startServer(overrides = {}) {
 
   const store = createStore(config.storePath);
   const logger = { debug() {}, info() {}, warn() {}, error() {} };
-  const app = createApp({ store, sms, config, logger });
+  // Signature verification stays real; only the network SMS call is faked.
+  const provider = { ...createProvider(config), sendSms: sms.send };
+  const app = createApp({ store, provider, config, logger });
   const server = http.createServer((req, res) => {
     // Record when the response is written so tests can assert the SMS went out
     // first. On serverless, anything after res.end() may never run.
@@ -299,7 +303,7 @@ test("subscribers survive a restart", async (t) => {
 });
 
 test("buildServer refuses to start without its Twilio credentials", async (t) => {
-  assert.throws(() => buildServer({}), /Missing required environment variable\(s\): TWILIO_ACCOUNT_SID/);
+  assert.throws(() => buildServer({}), /Missing required environment variable\(s\): PUBLIC_BASE_URL, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN/);
 });
 
 test("unknown paths 404 rather than leaking a stack", async (t) => {
@@ -394,6 +398,7 @@ function buildAppDirect() {
     },
   };
   const config = {
+    provider: "twilio",
     twilioAccountSid: ACCOUNT_SID,
     twilioAuthToken: AUTH_TOKEN,
     publicBaseUrl: BASE,
@@ -405,7 +410,8 @@ function buildAppDirect() {
   };
   const store = createStore(config.storePath);
   const logger = { debug() {}, info() {}, warn() {}, error() {} };
-  return { app: createApp({ store, sms, config, logger }), store, sent };
+  const provider = { ...createProvider(config), sendSms: sms.send };
+  return { app: createApp({ store, provider, config, logger }), store, sent };
 }
 
 function mockRes() {

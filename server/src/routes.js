@@ -1,4 +1,4 @@
-import { parseFormBody, validateTwilioSignature } from "./signature.js";
+import { parseFormBody } from "./signature.js";
 import { decideReply, isMissedCall, isReplyableNumber, digitsOf } from "./policy.js";
 import { forwardCall, hangup, TWIML_CONTENT_TYPE } from "./twiml.js";
 import { PANEL_HTML } from "./panel.js";
@@ -10,7 +10,7 @@ import { PANEL_HTML } from "./panel.js";
  * well as over a real socket.
  */
 
-export function createApp({ store, sms, config, logger = console }) {
+export function createApp({ store, provider, config, logger = console }) {
   /** Absolute URL Twilio signed. Behind a proxy this must come from config. */
   function absoluteUrl(req) {
     if (config.publicBaseUrl) return `${config.publicBaseUrl}${req.url}`;
@@ -68,17 +68,19 @@ export function createApp({ store, sms, config, logger = console }) {
     return Buffer.concat(chunks).toString("utf8");
   }
 
-  /** Rejects the request unless Twilio actually sent it. */
-  function twilioAuthed(req, rawBody) {
-    const params = parseFormBody(rawBody);
-    const signature = req.headers["x-twilio-signature"];
-    const valid = validateTwilioSignature({
+  /**
+   * Rejects the request unless the carrier actually sent it.
+   *
+   * Both providers post form-encoded bodies with the same field names, so the
+   * parsed params are shared; only how the signature is checked differs.
+   */
+  function carrierAuthed(req, rawBody) {
+    const valid = provider.verifyWebhook({
       url: absoluteUrl(req),
-      params,
-      signature,
-      authToken: config.twilioAuthToken,
+      rawBody,
+      headers: req.headers,
     });
-    return { valid, params };
+    return { valid, params: parseFormBody(rawBody) };
   }
 
   function bearerAuthed(req) {
@@ -135,7 +137,7 @@ export function createApp({ store, sms, config, logger = console }) {
    */
   async function handleVoice(req, res) {
     const raw = await readBody(req);
-    const { valid, params } = twilioAuthed(req, raw);
+    const { valid, params } = carrierAuthed(req, raw);
     if (!valid) {
       logger.warn("rejected unsigned /voice request");
       return send(res, 403, { error: "invalid_signature" });
@@ -155,7 +157,7 @@ export function createApp({ store, sms, config, logger = console }) {
       forwardCall({
         forwardTo: subscriber.forwardTo,
         actionUrl,
-        timeoutSeconds: subscriber.ringSeconds,
+        timeoutSeconds: Math.min(subscriber.ringSeconds, provider.maxDialTimeout),
         callerId: params.To,
       }),
       { "Content-Type": TWIML_CONTENT_TYPE },
@@ -170,7 +172,7 @@ export function createApp({ store, sms, config, logger = console }) {
    */
   async function handleVoiceCompleted(req, res) {
     const raw = await readBody(req);
-    const { valid, params } = twilioAuthed(req, raw);
+    const { valid, params } = carrierAuthed(req, raw);
     if (!valid) {
       logger.warn("rejected unsigned /voice/completed request");
       return send(res, 403, { error: "invalid_signature" });
@@ -216,7 +218,7 @@ export function createApp({ store, sms, config, logger = console }) {
     }
 
     try {
-      const result = await sms.send({
+      const result = await provider.sendSms({
         from: params.To,
         to: params.From,
         body: String(subscriber.message).trim().slice(0, 160),

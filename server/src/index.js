@@ -1,7 +1,7 @@
 import http from "node:http";
 import { createStore } from "./store.js";
 import { createRedisStore } from "./store-redis.js";
-import { createSmsClient } from "./sms.js";
+import { createProvider } from "./provider.js";
 import { createApp } from "./routes.js";
 
 /**
@@ -22,16 +22,30 @@ import { createApp } from "./routes.js";
  *   LOG_LEVEL            default info
  */
 
+/** Credentials each provider needs before it can send or verify anything. */
+const PROVIDER_ENV = {
+  twilio: ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"],
+  telnyx: ["TELNYX_API_KEY", "TELNYX_PUBLIC_KEY"],
+};
+
 function loadConfig(env = process.env) {
-  const required = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "PUBLIC_BASE_URL"];
+  const provider = (env.PROVIDER ?? "twilio").toLowerCase();
+  if (!PROVIDER_ENV[provider]) {
+    throw new Error(`Unknown PROVIDER: ${provider}. Use "twilio" or "telnyx".`);
+  }
+
+  const required = ["PUBLIC_BASE_URL", ...PROVIDER_ENV[provider]];
   const missing = required.filter((key) => !env[key]);
   if (missing.length > 0) {
     throw new Error(`Missing required environment variable(s): ${missing.join(", ")}`);
   }
 
   return {
-    twilioAccountSid: env.TWILIO_ACCOUNT_SID,
-    twilioAuthToken: env.TWILIO_AUTH_TOKEN,
+    provider,
+    twilioAccountSid: env.TWILIO_ACCOUNT_SID ?? "",
+    twilioAuthToken: env.TWILIO_AUTH_TOKEN ?? "",
+    telnyxApiKey: env.TELNYX_API_KEY ?? "",
+    telnyxPublicKey: env.TELNYX_PUBLIC_KEY ?? "",
     publicBaseUrl: env.PUBLIC_BASE_URL.replace(/\/+$/, ""),
     port: Number(env.PORT ?? 3000),
     storePath: env.STORE_PATH ?? "./data/subscribers.json",
@@ -83,11 +97,9 @@ export function buildServer(env = process.env) {
   const config = loadConfig(env);
   const logger = createLogger(env.LOG_LEVEL);
   const store = selectStore(config, logger);
-  const sms = createSmsClient({
-    accountSid: config.twilioAccountSid,
-    authToken: config.twilioAuthToken,
-  });
-  const app = createApp({ store, sms, config, logger });
+  const provider = createProvider(config);
+  logger.info("provider", { name: provider.name });
+  const app = createApp({ store, provider, config, logger });
 
   const server = http.createServer((req, res) => {
     app.handle(req, res);

@@ -8,20 +8,22 @@ Android app.
 
 - Zero runtime dependencies. `node:http`, `node:crypto`, global `fetch`.
 - Node 20+.
-- 58 tests, including integration tests over real sockets with real Twilio
-  signatures. No mocking of the HTTP layer, no network access needed to run them.
+- Works with **Twilio or Telnyx** behind one provider seam.
+- 81 tests, including integration tests over real sockets with real webhook
+  signatures (HMAC-SHA1 for Twilio, Ed25519 for Telnyx). No mocking of the HTTP
+  layer, no network access needed to run them.
 
 ```
-npm test      # 58 tests, ~0.9s
+npm test      # 81 tests, ~1.1s
 npm start     # needs the env vars below
 ```
 
 ## How it works
 
 ```
-Caller dials your Twilio number
+Caller dials your Twilio/Telnyx number
         ↓
-POST /voice                          ← Twilio webhook, signature-checked
+POST /voice                          ← carrier webhook, signature-checked
         ↓
 TwiML: <Dial action="/voice/completed"> your real number </Dial>
         ↓
@@ -65,9 +67,12 @@ Environment:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `TWILIO_ACCOUNT_SID` | yes | account the numbers belong to |
-| `TWILIO_AUTH_TOKEN` | yes | REST auth **and** webhook signature verification |
-| `PUBLIC_BASE_URL` | yes | absolute origin Twilio reaches you at |
+| `PROVIDER` | no | `twilio` (default) or `telnyx` |
+| `TWILIO_ACCOUNT_SID` | twilio | account the numbers belong to |
+| `TWILIO_AUTH_TOKEN` | twilio | REST auth **and** webhook signature verification |
+| `TELNYX_API_KEY` | telnyx | Messaging API auth |
+| `TELNYX_PUBLIC_KEY` | telnyx | account Ed25519 **public** key for webhook verification |
+| `PUBLIC_BASE_URL` | yes | absolute origin the carrier reaches you at |
 | `PORT` | no | default 3000 |
 | `STORE_PATH` | no | file backend path, default `./data/subscribers.json` |
 | `REDIS_REST_URL` | no | Redis REST endpoint; enables the serverless backend |
@@ -75,12 +80,12 @@ Environment:
 | `API_KEY` | no | enables the settings API and panel; without it writes are refused |
 | `LOG_LEVEL` | no | `debug`/`info`/`warn`/`error`, default `info` |
 
-`PUBLIC_BASE_URL` is not cosmetic. Twilio signs the **full URL it called**, so if
-you guess the origin from the `Host` header behind a proxy the signature will not
-match and every webhook will 403. Set it explicitly.
+`PUBLIC_BASE_URL` is not cosmetic. **Twilio** signs the full URL it called, so if you
+guess the origin from the `Host` header behind a proxy the signature will not match
+and every webhook will 403. Set it explicitly.
 
-Then point each Twilio number's **Voice webhook** at `https://you/voice`
-(POST). Nothing else needs configuring in the Twilio console.
+Then point each number's voice webhook at `https://you/voice` (POST), and the call
+progress / status callback at `https://you/voice/completed`.
 
 ### Smoke test
 
@@ -89,6 +94,34 @@ TWILIO_ACCOUNT_SID=ACtest TWILIO_AUTH_TOKEN=tok \
 PUBLIC_BASE_URL=https://mctb.example.com PORT=8931 \
 STORE_PATH=/tmp/subs.json API_KEY=sekret npm start
 ```
+
+## Twilio or Telnyx
+
+Both work; the call-flow logic is shared and only signature verification and the
+SMS call sit behind the seam. Telnyx's TeXML is deliberately TwiML-compatible —
+same form-encoded webhooks, same `From`/`To`/`DialCallStatus` field names, same
+status values — which is what makes sharing that logic safe rather than lucky.
+
+| | Twilio | Telnyx |
+| --- | --- | --- |
+| Webhook auth | HMAC-SHA1 over URL + sorted params, shared secret | Ed25519 over `timestamp\|body`, account **public** key |
+| Replay protection | none built in | timestamp header, 5-minute window enforced here |
+| SMS request | form-encoded, Basic auth, `Body` | JSON, Bearer auth, `text` |
+| Max ring timeout | 600s | 120s |
+| Typically | dearer per message, widest docs | cheaper, especially international |
+
+Two consequences worth knowing:
+
+- **The Telnyx path is the more secure of the two**, and not because of anything
+  done here. Ed25519 means a leaked *public* key cannot forge a webhook, and the
+  timestamp window blocks replaying a captured request. Twilio's shared secret can
+  do both if it leaks.
+- **`TELNYX_PUBLIC_KEY` is a public key.** Pasting your API key there instead will
+  make every webhook fail verification, and the failure looks identical to a
+  network problem. The key is in Mission Control → Keys & Credentials → Public Key.
+
+Provider selection is `PROVIDER=twilio|telnyx`; the required credentials change
+with it, and naming the wrong set is a startup error rather than a runtime one.
 
 ## Control panel
 
