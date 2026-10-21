@@ -17,12 +17,19 @@ from a checkout.
 | Node version | 24.x |
 | Region | `iad1` |
 
-**A production build has succeeded** — deployment
-`dpl_2ov9E33RQY2DptzPppik6W6Z7KRj`, status READY, built in 4.5s from commit
-`4d41202`. Packaging, ESM detection and function discovery are therefore
-confirmed. What is *not* confirmed is anything behind a request: the
-environment that built this cannot reach `*.vercel.app`, so no response from
-the live function has been observed.
+**Production is deployed and current** — `dpl_FrGMswmpGmcSgH2y34hkhQcASE7j`,
+status READY and promoted, built from `c160398`. That is the tip of this branch,
+so production runs the code the 131 tests cover. The build environment confirms
+`PROVIDER`, `PUBLIC_BASE_URL` and `GOOGLE_PLAY_PACKAGE_NAME` reached it.
+
+Confirmed by this: packaging, ESM detection, function discovery, and the rewrite
+table compiling. **Not** confirmed: anything behind a request. The environment
+that built this cannot reach `*.vercel.app`, so no response from the live
+function has ever been observed. `/healthz` is the first thing to try.
+
+Until Redis is configured, every path except `/healthz` and `/` will return
+`500 configuration_error` naming the missing variables. That is the intended
+behaviour, not a fault — the alternative was silently losing subscriber data.
 
 Already set, because none of them are secret: `PROVIDER=telnyx`,
 `PUBLIC_BASE_URL=https://missed-call-reply.vercel.app`,
