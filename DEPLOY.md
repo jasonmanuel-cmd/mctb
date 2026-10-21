@@ -170,23 +170,41 @@ call-forward-on-no-answer is not a workaround: the server would dial the number
 that just forwarded, and loop. The subscriber publishes the Telnyx number as
 their work line.
 
-## 8. Android app — still blocked
+## 8. Android app — never compiled
 
-The Play Store side has never been compiled. GitHub Actions refuses to start any
-job on this repository with:
+**The app has never been built.** Not once, on any machine. Everything verified
+about the Kotlin so far is static: `tools/check_project.py` checks `R.string`
+references, removed symbols and brace balance. It cannot check types or syntax,
+so a compile error is still possible.
+
+GitHub Actions refuses to start any job on this repository:
 
 > The job was not started because your account is locked due to a billing issue.
 
-That is an account-level lock, not a workflow defect. Once billing is resolved,
-`.github/workflows/android-ci.yml` runs `assembleDebug testDebugUnitTest`, a
-non-blocking `lintDebug`, and an `assembleRelease`, uploading the APK, test and
-lint reports as artifacts.
+That is an account-level lock, not a workflow defect — the job runs zero steps.
+**But CI is not required to ship.** Building locally needs no third party at all:
 
-The release build is **unsigned in CI**, because the workflow supplies no
-secrets. Signing is already wired in `app/build.gradle.kts` but conditional, so
-a fresh clone still compiles instead of failing for want of a keystore. To
-produce an uploadable AAB, supply these Gradle properties (in
-`~/.gradle/gradle.properties`, or as CI secrets):
+1. Install Android Studio.
+2. *Build → Generate Signed Bundle / APK → Android App Bundle*.
+3. Create an upload keystore when prompted (keep it safe; Play App Signing
+   handles the rest), then build.
+4. Upload the `.aab` to Play Console.
+
+That is how most solo developers ship, and it sidesteps the billing lock
+entirely. The first build is the real test of this code — expect to fix
+whatever it reports.
+
+CI is a convenience, not a dependency. If you want automation without fixing
+GitHub billing, Bitrise, Codemagic and CircleCI all connect to an existing
+GitHub repository over OAuth and build it on their runners — GitHub stays as
+file storage only, and nothing has to be mirrored elsewhere. `.github/workflows/
+android-ci.yml` remains available for when billing is resolved.
+
+The CI release build is **unsigned**, because the workflow supplies no secrets.
+Signing is already wired in `app/build.gradle.kts` but conditional, so a fresh
+clone still compiles instead of failing for want of a keystore. To produce an
+uploadable AAB, supply these Gradle properties (in `~/.gradle/gradle.properties`,
+or as CI secrets):
 
 ```
 MCTB_KEYSTORE=/absolute/path/to/release.jks
