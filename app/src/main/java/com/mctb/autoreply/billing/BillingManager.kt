@@ -146,12 +146,20 @@ class BillingManager(
                 return@queryProductDetailsAsync
             }
 
+            val offer = details.oneTimePurchaseOfferDetailsList?.firstOrNull()
+            if (offer == null) {
+                // Fetched, but nothing this user can actually buy - showing a
+                // buy button here would fail the moment it was tapped.
+                _offer.value = UnlockOffer.Unavailable("No offers available to this user")
+                return@queryProductDetailsAsync
+            }
+
             cachedDetails = details
             // Don't overwrite an already-known entitlement with a buy button.
             if (_offer.value !is UnlockOffer.Owned) {
                 _offer.value = UnlockOffer.Purchasable(
                     productDetails = details,
-                    formattedPrice = details.oneTimePurchaseOfferDetails?.formattedPrice
+                    formattedPrice = offer.formattedPrice
                 )
             }
         }
@@ -165,8 +173,20 @@ class BillingManager(
             return
         }
 
+        // Play Billing 8 models one-time products as purchase options, so the
+        // flow needs an offer token taken from the offer list, not the product
+        // alone. Leaving it off still compiles - the failure only appears when
+        // someone actually taps buy, which is the worst place to find it.
+        val offer = details.oneTimePurchaseOfferDetailsList?.firstOrNull()
+        if (offer == null) {
+            _offer.value = UnlockOffer.Unavailable("No purchasable offer available")
+            Log.w(TAG, "No one-time purchase offers returned for $PRODUCT_ID_UNLIMITED")
+            return
+        }
+
         val productParams = BillingFlowParams.ProductDetailsParams.newBuilder()
             .setProductDetails(details)
+            .setOfferToken(offer.offerToken)
             .build()
 
         val flowParams = BillingFlowParams.newBuilder()
