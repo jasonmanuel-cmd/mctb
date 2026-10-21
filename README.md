@@ -1,349 +1,264 @@
-# Missed Call Auto-Reply
+# Missed Call Reply
 
-**Production-ready Android application that automatically sends SMS replies when you miss a phone call.**
+For people who cannot afford to lose a lead to a missed call: when a call rings out,
+your prepared message goes to the caller automatically.
 
-Built for tradespeople, freelancers, and busy professionals who can't afford to lose leads due to missed calls.
+Targeted at tradespeople, freelancers and field workers.
 
----
+There are **two delivery modes** in this repo, and the difference matters:
 
-## 📋 Table of Contents
-
-- [Overview](#overview)
-- [Features](#features)
-- [Technical Stack](#technical-stack)
-- [Prerequisites](#prerequisites)
-- [Getting Started](#getting-started)
-- [Building the APK](#building-the-apk)
-- [How It Works](#how-it-works)
-- [Permissions Explained](#permissions-explained)
-- [Architecture](#architecture)
-- [Assumptions & Design Decisions](#assumptions--design-decisions)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
+| | Server mode (`server/`) | On-device mode (`app/`) |
+|---|---|---|
+| Taps needed | **Zero** | One |
+| Where it runs | Your host | The subscriber's phone |
+| Callers dial | Your Twilio number | Any number |
+| Needs Play Store | No | Yes |
+| Status | **Working and tested** (58 tests) | **Never compiled** |
 
 ---
 
-## Overview
+## Read this first: why there are two modes
 
-This app solves a simple but critical problem: **missed calls = lost opportunities**.
+**A phone cannot silently send SMS.** `SEND_SMS` belongs to a restricted permission
+group; Play limits it to apps registered as the **default SMS, Phone or Assistant
+handler**, and "auto-reply to a missed call" is not on the exception list.
+`READ_CALL_LOG` is in the same group and is load-bearing for reading the number from
+the phone-state broadcast. Since Android 15 `SEND_SMS` is additionally
+**hard-restricted** for sideloaded installs, so shipping the APK outside Play does
+not rescue a silent-send design either.
 
-When you miss a call, the app instantly sends a predefined SMS message to that caller, letting them know you'll get back to them. This keeps leads warm and shows professionalism even when you're busy.
+So on a phone, the honest best case is one tap. That is what `app/` does: it detects
+the miss and posts a notification with your message pre-filled; you tap the action
+and your own messaging app opens ready to send.
 
-### What Makes This Production-Ready
+**Zero taps requires the call to go through a provider that can tell you it went
+unanswered.** That is what `server/` does, and it is the mode to ship if "truly
+automatic" is the requirement. It never touches SMS permissions, so Play policy is
+irrelevant to it.
 
-✅ **Jetpack Compose** with Material 3 design
-✅ **Latest stable tooling** (AGP 8.7.0, Gradle 8.9, Kotlin 2.0)
-✅ **DataStore Preferences** for modern, reactive data persistence
-✅ **Foreground service** for reliable background operation
-✅ **Smart debounce** to prevent spamming the same number
-✅ **Free tier enforcement** with upgrade path
-✅ **Clean architecture** with separation of concerns
-✅ **No TODOs, no placeholders** - fully functional code
+The cost is that callers must dial a Twilio number rather than your personal SIM.
+For a work line that is usually a feature, not a bug — see `server/README.md`.
 
----
-
-## Features
-
-### Core Functionality
-
-- ✅ **Automatic SMS Reply** - Sends a customizable message when you miss a call
-- ✅ **Active Hours** - Configure when auto-replies should be sent (or 24/7)
-- ✅ **Smart Debounce** - Won't spam the same number (30-min cooldown)
-- ✅ **Free Tier Limit** - 5 free auto-texts, then upgrade
-- ✅ **Unknown Number Filtering** - Ignores private/blocked callers
-- ✅ **Background Reliability** - Foreground service ensures it works even when sleeping
-- ✅ **Survives Reboot** - Automatically restarts if enabled before shutdown
-
-### User Interface
-
-- 🎨 **Material 3 Design** - Modern, adaptive UI with dynamic colors
-- 📱 **4 Clean Screens**:
-  - **Home**: Master toggle, status, usage counter
-  - **Message Editor**: Customize your auto-reply (160 char limit)
-  - **Active Hours**: Set work hours with time pickers
-  - **Usage**: View usage and upgrade to unlimited
-- 🔒 **Permission Handling** - Clear explanations and smooth permission flow
-- 🌙 **Dark Mode** - Follows system theme automatically
 
 ---
 
-## Technical Stack
+## How it works
 
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| **Language** | Kotlin | 2.0.21 |
-| **Build System** | Android Gradle Plugin | 8.7.0 |
-| **Gradle** | Gradle Wrapper | 8.9 |
-| **UI Framework** | Jetpack Compose | 2024.12.01 BOM |
-| **Design System** | Material 3 | Latest |
-| **Data Persistence** | DataStore Preferences | 1.1.1 |
-| **Navigation** | Navigation Compose | 2.8.5 |
-| **Coroutines** | Kotlin Coroutines | 1.9.0 |
-| **Permissions** | Accompanist Permissions | 0.36.0 |
-| **Target SDK** | Android 15 (API 35) | - |
-| **Minimum SDK** | Android 8.0 (API 26) | - |
-
----
-
-## Prerequisites
-
-### Development Environment
-
-- **Android Studio**: Hedgehog (2023.1.1) or newer
-- **JDK**: Java 17 or higher
-- **Git**: For cloning the repository
-
-### For Testing
-
-- **Physical Android Device** (recommended) or Emulator
-- **Android 8.0+** (API 26 or higher)
-- **Active SIM card** (for SMS sending on real device)
-
----
-
-## Getting Started
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/blunts954-png/mctb.git
-cd mctb
+```
+1. Incoming call
+      ↓
+2. ReplyScreeningService.onScreenCall()          ← caller id, before ringing
+   records the number in SharedPreferences
+      ↓
+3. Phone rings. PHONE_STATE broadcast → RINGING
+      ↓
+4a. You answer  → OFFHOOK → tracking cleared, nothing happens
+4b. You don't   → IDLE    → missed call
+      ↓
+5. MissedCallHandler gates it:
+      enabled? · inside active hours? · quota left? · not texted in last 30 min?
+      ↓
+6. Notification: "Missed call from +15550101234"  [Send reply]
+      ↓
+7. Tap → ReplyActivity charges one reply, then opens your messaging app
+   via ACTION_SENDTO with the number and message pre-filled
+      ↓
+8. You press send.
 ```
 
-### 2. Open in Android Studio
+### Why there is no foreground service
 
-1. Launch Android Studio
-2. Select **File → Open**
-3. Navigate to the cloned `mctb` directory
-4. Click **OK**
-5. Wait for Gradle sync to complete (first sync may take a few minutes)
+The previous revision ran a `phoneCall`-type foreground service. That does not work:
 
-### 3. Run on Device/Emulator
+| Constraint | Consequence for the old design |
+|---|---|
+| Android 14+: `phoneCall` FGS requires `MANAGE_OWN_CALLS` **or** the default dialer role | `startForeground()` throws `SecurityException` — crash on the first toggle |
+| Android 15+: `BOOT_COMPLETED` may not launch a `phoneCall` FGS | `ForegroundServiceStartNotAllowedException` on every reboot |
 
-1. Connect an Android device via USB (with USB debugging enabled)
-   - OR start an Android emulator
-2. Select your device from the device dropdown
-3. Click the **Run** button (▶️) or press `Shift + F10`
-4. App will install and launch automatically
+`ACTION_PHONE_STATE_CHANGED` is a protected system broadcast that wakes a
+manifest-declared receiver from a dead process. No service, no battery-optimisation
+fight, no reboot handler needed.
+
+This matters because Android 8.0+ normally blocks manifest registration for implicit
+broadcasts — but `ACTION_PHONE_STATE_CHANGED` is explicitly on the
+[implicit broadcast exceptions](https://developer.android.com/develop/background-work/background-tasks/broadcasts/broadcast-exceptions)
+list, so it keeps working regardless of target API.
 
 ---
 
-## Building the APK
+## Permissions
 
-### Debug APK (for testing)
+| Permission | Why | Restricted by Play? |
+|---|---|---|
+| `READ_PHONE_STATE` | Detect RINGING / OFFHOOK / IDLE transitions | No |
+| `POST_NOTIFICATIONS` | Deliver the reply prompt (API 33+) | No |
+| `com.android.vending.BILLING` | Play Billing | No |
+| `ROLE_CALL_SCREENING` *(runtime role, not a manifest permission)* | See who is calling | No — granted via a system dialog |
+
+**Not requested:** `SEND_SMS`, `READ_SMS`, `READ_CALL_LOG`, `WRITE_CALL_LOG`,
+`READ_CONTACTS`, `FOREGROUND_SERVICE*`, `RECEIVE_BOOT_COMPLETED`,
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
+
+There is no SMS or Call Log permission in the manifest, so **no Play permissions
+declaration form is required**.
+
+### Privacy
+
+Numbers are held on-device only, for at most 30 minutes, purely to stop the same
+caller being prompted twice. The ledger prunes expired entries on every write, so it
+cannot grow without bound. Nothing is transmitted anywhere. There is no analytics and
+no crash reporting.
+
+---
+
+## Project layout
+
+```
+domain/        Pure Kotlin, no android.* imports — unit tested on the JVM
+  PhoneNumberValidator   replyable? (fixes the substring bug that rejected any number containing a zero)
+  ActiveHours            window logic in minutes-since-midnight, incl. midnight wrap
+  MissedCallStateMachine transition table: when did a call end unanswered?
+  DebounceLedger         bounded per-number cooldown codec
+data/
+  AppPreferences         DataStore. One-shot reads use .first(), never .collect{}
+  CallStateStore         SharedPreferences, committed synchronously — survives process death
+screening/ReplyScreeningService   captures caller id
+receiver/PhoneStateReceiver       goAsync() + coroutine, finishes the broadcast properly
+receiver/MissedCallHandler        the gating decision
+notify/MissedCallNotifier         high-priority prompt
+reply/ReplyIntentFactory          ACTION_SENDTO builder
+reply/ReplyActivity               invisible trampoline: charges quota, hands off
+billing/BillingManager            Play Billing 8.x
+ui/                              Compose / Material 3
+tools/check_project.py           static consistency gate (see Verification)
+```
+
+---
+
+## Building
+
+Requires JDK 17, Android SDK with platform 35.
 
 ```bash
-# From project root directory
 ./gradlew assembleDebug
-```
-
-Output: `app/build/outputs/apk/debug/app-debug.apk`
-
-### Release APK (for distribution)
-
-#### Option 1: Unsigned Release Build
-
-```bash
+./gradlew test            # JVM unit tests for the domain logic
 ./gradlew assembleRelease
 ```
 
-Output: `app/build/outputs/apk/release/app-release-unsigned.apk`
+`gradle/wrapper/gradle-wrapper.jar` **is committed**, so `./gradlew` runs from a
+fresh clone with no bootstrap step. (It was fetched from `android/nowinandroid` and
+verified as a valid jar containing `GradleWrapperMain`; the earlier revision of this
+README described a bootstrap dance that is no longer needed.)
 
-### Install APK on Device
+`minSdk` is **29** (Android 10): a third-party `CallScreeningService` is only bound by
+the framework from API 29, and `RoleManager` is API 29+.
+
+### Server
+
+No build step. No dependencies to install.
 
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+cd server
+npm test     # 58 tests
+npm start    # requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, PUBLIC_BASE_URL
 ```
 
 ---
 
-## How It Works
+## Verification status — what was and was not checked
 
-### High-Level Flow
+Being explicit, because the last revision of this repo claimed "production-ready, no
+placeholders, fully functional" and had never been compiled.
 
-```
-1. User enables auto-reply in app
-   ↓
-2. Foreground service starts, displays persistent notification
-   ↓
-3. Phone call comes in → RINGING state
-   ↓
-4. User doesn't answer → IDLE state (without OFFHOOK)
-   ↓
-5. CallReceiver detects missed call
-   ↓
-6. SmsHandler validates conditions:
-   - App enabled? ✓
-   - Within active hours? ✓
-   - Under free tier limit? ✓
-   - Not recently texted this number? ✓
-   - Valid phone number? ✓
-   ↓
-7. SMS sent via Android SmsManager
-   ↓
-8. Usage counter incremented
-   ↓
-9. Timestamp recorded for debounce
-```
+**Checked**
 
-### Missed Call Detection
+- **`server/` — 58 tests, all passing (`npm test`, Node 22.22.3).** Integration tests
+  drive the real HTTP server over a real socket with correctly-signed Twilio webhooks:
+  forwarded-call TwiML, `no-answer` → SMS sent, `completed` → nothing sent, unsigned
+  and tampered signatures 403'd, per-caller debounce, free-tier quota cutoff, and
+  "a failed SMS send does not consume quota". The suite was mutation-tested:
+  four deliberate regressions (treat answered calls as missed; skip signature
+  validation; charge quota on send failure; drop `callerId` from the `Dial`) each
+  produce a failing test, and each reverts to green.
+- **`server/` smoke-tested as a process.** Booted with real env vars: `/healthz` →
+  200 `{"ok":true}`, a settings `PUT` → 200 and persisted to the JSON store, an
+  unsigned webhook → 403, and startup correctly refuses with a named missing
+  variable when credentials are absent.
+- `tools/check_project.py` — a static consistency gate over the real source. It
+  resolves every `R.*` and `@type/name` reference against declared resources, verifies
+  every manifest component maps to a real class, checks that every
+  `Manifest.permission.*` used in code is declared, fails on the
+  `dataStore.data.collect {}` deadlock pattern, validates `stringResource` format-arg
+  counts against each string's placeholders, checks package/directory agreement,
+  project-internal imports, bracket balance, and asserts no code still references the
+  removed architecture. **Result: 23 Kotlin files, 68 strings, 3 permissions — all
+  passing.** It was itself mutation-tested: re-injecting the four v1 defects (missing
+  string, DataStore `collect`, phantom manifest class, format-arg mismatch) produces
+  exactly four findings.
+- The pure domain algorithms were re-implemented independently and run against 28
+  assertions covering the window boundaries, the full state-transition table, stale
+  and future timestamps, cooldown formatting and ledger pruning. All pass. This
+  validates the **logic**, not the Kotlin that encodes it.
+- Platform constraints (FGS prerequisites, `BOOT_COMPLETED` restrictions, Play
+  SMS/Call Log policy, `SEND_SMS` hard-restriction) were confirmed against
+  `developer.android.com` and Play Console policy pages.
 
-The app uses a state machine approach to detect missed calls:
+**Not checked — all of this is the Android app; the server is covered above**
 
-| Previous State | Current State | Interpretation |
-|---------------|---------------|----------------|
-| IDLE | RINGING | Incoming call started |
-| RINGING | OFFHOOK | Call was answered |
-| RINGING | IDLE | **Missed call** (never answered) |
-| OFFHOOK | IDLE | Call ended normally |
-
----
-
-## Permissions Explained
-
-The app requires the following permissions:
-
-| Permission | Purpose | When Requested |
-|------------|---------|----------------|
-| `READ_PHONE_STATE` | Detect incoming calls | On first enable |
-| `READ_CALL_LOG` | Identify missed vs answered calls | On first enable |
-| `SEND_SMS` | Send auto-reply messages | On first enable |
-| `POST_NOTIFICATIONS` | Show foreground service notification (API 33+) | On first enable |
-| `RECEIVE_BOOT_COMPLETED` | Restart service after reboot | Granted at install |
-| `FOREGROUND_SERVICE` | Run background monitoring service | Granted at install |
-| `FOREGROUND_SERVICE_PHONE_CALL` | Specify service type for call monitoring | Granted at install |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Suggest disabling battery optimization | User-initiated |
+- **No compile and no build.** There is no JDK, Gradle or Android SDK in the
+  environment this was written in, and `services.gradle.org`, `dl.google.com` and
+  `maven.google.com` are all unreachable from it. Expect to fix small compilation
+  errors on first sync.
+- **Not run on a device.** The screening-service → receiver → notification path needs
+  testing on real hardware, especially Samsung and Xiaomi.
+- **Play Billing has never executed.** It only resolves products for a build installed
+  from a Play track with the product `unlimited_replies` published in Play Console.
+  Until then the app shows "Upgrade unavailable", which is by design and does not
+  affect the free tier.
+- **The committed JUnit tests have not been run.** They are pure JVM tests and should
+  pass under `./gradlew test`, but that is an expectation, not a result.
 
 ---
 
-## Architecture
+## Play Console launch checklist
 
-### Key Components
-
-#### AppPreferences
-
-- Wraps DataStore Preferences
-- Exposes reactive Flows for UI observation
-- Provides suspend functions for writes
-- Includes sync read helpers for background operations
-- Handles debounce tracking and usage counting
-
-#### SmsHandler
-
-- Validates all conditions before sending SMS
-- Checks: enabled state, active hours, limit, debounce, number validity
-- Wraps Android SmsManager
-- Filters out invalid/unknown numbers
-
-#### CallReceiver
-
-- Listens for PHONE_STATE broadcasts
-- Tracks call state transitions
-- Detects missed call pattern (RINGING → IDLE without OFFHOOK)
-- Delegates to SmsHandler in coroutine scope
-
-#### CallMonitorService
-
-- Foreground service for process stability
-- Creates notification channel (API 26+)
-- Displays minimal low-priority notification
-- Returns START_STICKY for auto-restart
+1. **In-app product.** Monetization → Products → In-app products → create
+   `unlimited_replies`, one-time, priced. Activate it, then publish a release to a
+   track — products do not resolve until the build is on a track.
+2. **Data safety form.** Declare: no data collected, no data shared, no personal data
+   transmitted. Phone numbers are processed on-device and are not persisted beyond
+   the 30-minute cooldown.
+3. **Permissions declaration.** Not required — no SMS or Call Log permission is
+   declared.
+4. **Foreground service types.** Not required — no foreground service.
+5. **Target API.** `targetSdk = 35`, which meets the current Play requirement.
+6. **Store listing.** Be accurate: describe it as *"prepares a reply you send in one
+   tap"*. Claiming fully automatic texting would misdescribe the app and invite a
+   rejection.
+7. **Signing.** Add a `signingConfig` to `app/build.gradle.kts` — currently absent, so
+   `assembleRelease` produces an unsigned AAB.
+8. **Privacy policy URL.** Required for every Play app.
+9. **Test on hardware** before submitting: grant call screening, miss a call from an
+   unsaved number, confirm the prompt appears and the hand-off pre-fills correctly.
 
 ---
 
-## Assumptions & Design Decisions
+## Known limitations
 
-### Senior-Level Assumptions Made
-
-1. **No Billing Integration**: Upgrade button is a placeholder. Production would integrate Google Play Billing Library.
-
-2. **Simple Upgrade Flow**: One-time upgrade to unlimited. Could be expanded to subscriptions or tiered pricing.
-
-3. **No Analytics**: No tracking, no crash reporting. Production app would likely add Firebase Analytics + Crashlytics.
-
-4. **No Server Component**: All data stored locally. Future versions might sync settings/usage across devices.
-
-5. **SMS Only**: Doesn't support other messaging apps (WhatsApp, etc). Android SMS only.
-
-6. **Single SIM Assumed**: On dual-SIM devices, uses default SMS SIM. Could be enhanced to select SIM.
-
-7. **Fixed Debounce Window**: 30 minutes hardcoded. Could be made user-configurable.
-
-8. **English Only**: All strings in English. Production would use string resources for i18n.
-
-### Why DataStore Over SharedPreferences
-
-- **Type-safe**: Preferences API provides type safety
-- **Asynchronous**: Non-blocking operations by default
-- **Reactive**: Flow-based observation for UI updates
-- **Coroutine-friendly**: Integrates seamlessly with Kotlin coroutines
-- **Future-proof**: SharedPreferences is legacy, DataStore is the modern approach
-
-### Why Jetpack Compose Over XML
-
-- **Less boilerplate**: Declarative UI reduces code by ~40%
-- **Type safety**: Compose is compile-time checked
-- **Reactivity**: State changes automatically update UI
-- **Modern**: XML layouts are legacy, Compose is the future
-- **Dynamic theming**: Material 3 dynamic colors work better in Compose
-
----
-
-## Troubleshooting
-
-### Build Issues
-
-**Problem**: Gradle sync fails with "SDK location not found"
-
-**Solution**:
-```bash
-# Create local.properties file
-echo "sdk.dir=/path/to/Android/Sdk" > local.properties
-```
-
-### Runtime Issues
-
-**Problem**: App doesn't detect missed calls
-
-**Solution**:
-1. Verify all permissions granted
-2. Check battery optimization is disabled
-3. Ensure service is running (notification should be visible)
-4. Try rebooting device
-
-**Problem**: Service stops working after some time
-
-**Solution**:
-1. Disable battery optimization (critical on Xiaomi, Huawei, OnePlus devices)
-2. Add app to manufacturer's "protected apps" list
-3. Disable "Adaptive Battery" for this app
+- **Saved contacts do not trigger a prompt.** Android only passes calls from numbers
+  *not* in the user's contacts to a screening service, unless the app also holds
+  `READ_CONTACTS`. `READ_CONTACTS` is deliberately not requested — it would widen the
+  data safety declaration for a feature whose value is catching unknown callers, which
+  are new leads.
+- **Withheld and private numbers cannot be replied to** — there is no number to send
+  to. These are detected and logged, not silently dropped.
+- **One reply per caller per 30 minutes.** Deliberate, to stop a redialler getting
+  three prompts.
+- **SMS only.** No WhatsApp or other messaging apps.
+- **Single SIM.** `ACTION_SENDTO` goes to the default SMS app, which picks the SIM.
 
 ---
 
 ## License
 
-MIT License
-
-Copyright (c) 2025 MCTB Development
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
----
-
-**Built with ❤️ for professionals who value every opportunity.**
+MIT — see [LICENSE](LICENSE).
