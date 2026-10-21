@@ -384,3 +384,76 @@ test("the function is configured with a sane memory and duration", () => {
   // Must stay within the hobby plan ceiling.
   assert.ok(fn.maxDuration <= 60, "maxDuration exceeds the hobby plan limit");
 });
+
+// ---------------------------------------------------------------------------
+// Vercel's actual compiled output
+//
+// Taken from a real deployment's route table, where every destination is
+// percent-encoded ("/api?__path=%2Fvoice%2Fcompleted"). The tests above use the
+// readable form from vercel.json, so without these nothing would have exercised
+// what actually arrives at the function.
+// ---------------------------------------------------------------------------
+
+test("routes the percent-encoded paths Vercel actually sends", async () => {
+  await withEnv(validEnv(), async () => {
+    const cases = [
+      ["/api?__path=%2Fhealthz", 200],
+      ["/api?__path=%2Fpanel", 200],
+      ["/api?__path=%2Fvoice", 403], // unsigned webhook: reached the route, failed auth
+    ];
+    for (const [url, want] of cases) {
+      const res = mockRes();
+      await handler(
+        { method: url.includes("%2Fvoice") ? "POST" : "GET", url, headers: {}, body: "" },
+        res,
+      );
+      assert.equal(res.statusCode, want, `unexpected status for ${url}`);
+    }
+  });
+});
+
+test("a signed webhook verifies through the encoded rewrite", async () => {
+  await withEnv(validEnv(), async () => {
+    const params = { From: "+15550101234", To: "+15559000001", CallStatus: "no-answer" };
+    const body = new URLSearchParams(params).toString();
+    const signature = computeTwilioSignature({
+      url: "https://mctb.example.com/voice/completed",
+      params,
+      authToken: "tok",
+    });
+
+    const res = mockRes();
+    await handler(
+      {
+        method: "POST",
+        url: "/api?__path=%2Fvoice%2Fcompleted",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "x-twilio-signature": signature,
+        },
+        body,
+      },
+      res,
+    );
+    assert.notEqual(res.statusCode, 403, "signature must survive the encoded rewrite");
+  });
+});
+
+test("the extra param Vercel appends for :number routes is harmless", async () => {
+  // Vercel compiles /subscribers/:number to "...&number=$1" as well as
+  // __path. The handler routes on the pathname, so it must still work.
+  await withEnv({ ...validEnv(), API_KEY: "sekret" }, async () => {
+    const res = mockRes();
+    await handler(
+      {
+        method: "PUT",
+        url: "/api?__path=%2Fsubscribers%2F%2B15559000001&number=%2B15559000001",
+        headers: { authorization: "Bearer sekret" },
+        body: JSON.stringify({ enabled: true, forwardTo: "+15558000002", message: "On a job." }),
+      },
+      res,
+    );
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.payload).forwardTo, "+15558000002");
+  });
+});
