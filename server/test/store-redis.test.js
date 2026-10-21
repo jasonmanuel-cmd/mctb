@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRedisStore } from "../src/store-redis.js";
-import { selectStore } from "../src/index.js";
+import { selectStore, buildApp } from "../src/index.js";
 import { minuteOfDay } from "../src/policy.js";
 
 const TWILIO_NUMBER = "+15559000001";
@@ -212,4 +212,88 @@ test("selectStore refuses a half-configured Redis", () => {
     () => selectStore({ redisUrl: "https://x", redisToken: "", storePath: "/tmp/nope.json" }),
     /must both be set/,
   );
+});
+
+test("selectStore refuses the file store on an ephemeral filesystem", () => {
+  // The failure this prevents is silent: writes appear to succeed and the data
+  // is gone on the next invocation. Better to refuse at startup and name the
+  // fix than to look like a bug in the panel later.
+  assert.throws(
+    () =>
+      selectStore(
+        { redisUrl: "", redisToken: "", storePath: "/tmp/whatever.json" },
+        undefined,
+        { ephemeralFs: true },
+      ),
+    /cannot be used on a serverless host/,
+  );
+});
+
+test("the ephemeral-filesystem refusal names the remedy", () => {
+  try {
+    selectStore({ redisUrl: "", redisToken: "", storePath: "/tmp/x.json" }, undefined, {
+      ephemeralFs: true,
+    });
+    assert.fail("expected a throw");
+  } catch (err) {
+    assert.match(err.message, /REDIS_REST_URL/, "must say which variables to set");
+  }
+});
+
+test("Redis still wins on an ephemeral filesystem", () => {
+  const store = selectStore(
+    { redisUrl: "https://x", redisToken: "t", storePath: "/tmp/nope.json" },
+    undefined,
+    { ephemeralFs: true },
+  );
+  assert.equal(store.kind, "redis");
+});
+
+test("a long-lived process is still allowed to use the file store", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mctb-ephemeral-"));
+  const store = selectStore(
+    { redisUrl: "", redisToken: "", storePath: path.join(dir, "s.json") },
+    undefined,
+    { ephemeralFs: false },
+  );
+  assert.equal(store.kind, "file");
+});
+
+// ---------------------------------------------------------------------------
+// The wiring, not just the helper
+//
+// Testing selectStore alone leaves the env detection uncovered: passing
+// ephemeralFs correctly and never passing it at all are indistinguishable.
+// ---------------------------------------------------------------------------
+
+function vercelEnv(overrides = {}) {
+  return {
+    PROVIDER: "twilio",
+    TWILIO_ACCOUNT_SID: "ACtest",
+    TWILIO_AUTH_TOKEN: "tok",
+    PUBLIC_BASE_URL: "https://mctb.example.com",
+    STORE_PATH: "/tmp/should-never-be-used.json",
+    ...overrides,
+  };
+}
+
+test("buildApp refuses to start on Vercel without Redis", () => {
+  assert.throws(
+    () => buildApp(vercelEnv({ VERCEL: "1" })),
+    /cannot be used on a serverless host/,
+    "Vercel sets VERCEL=1; the file store must not be selected",
+  );
+});
+
+test("buildApp allows the file store off Vercel", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mctb-buildapp-"));
+  const { store } = buildApp(vercelEnv({ STORE_PATH: path.join(dir, "s.json") }));
+  assert.equal(store.kind, "file");
+});
+
+test("buildApp starts on Vercel when Redis is configured", () => {
+  const { store } = buildApp(
+    vercelEnv({ VERCEL: "1", REDIS_REST_URL: "https://x.upstash.io", REDIS_REST_TOKEN: "t" }),
+  );
+  assert.equal(store.kind, "redis");
 });

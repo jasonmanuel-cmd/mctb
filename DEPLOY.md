@@ -1,6 +1,6 @@
 # Deploying Missed Call Reply
 
-Status as of this branch: the server is complete and tested (**124 tests**,
+Status as of this branch: the server is complete and tested (**131 tests**,
 `cd server && npm test`). What follows is everything that still needs a human,
 because each step needs credentials or account access that cannot be handled
 from a checkout.
@@ -23,6 +23,10 @@ from a checkout.
 confirmed. What is *not* confirmed is anything behind a request: the
 environment that built this cannot reach `*.vercel.app`, so no response from
 the live function has been observed.
+
+Already set, because none of them are secret: `PROVIDER=telnyx`,
+`PUBLIC_BASE_URL=https://missed-call-reply.vercel.app`,
+`GOOGLE_PLAY_PACKAGE_NAME=com.mctb.autoreply`.
 
 Two things still need doing in the dashboard:
 
@@ -61,7 +65,7 @@ Strongly recommended:
 
 | Variable | Why |
 | --- | --- |
-| `REDIS_REST_URL` | **Required in practice on Vercel.** The filesystem is ephemeral and not shared between invocations, so the default file store loses subscriber settings silently. Create a free Upstash Redis and copy the REST URL. |
+| `REDIS_REST_URL` | **Required on Vercel — enforced, not advised.** The filesystem is ephemeral and not shared between invocations, so the server now refuses to start with the file store there rather than silently losing subscriber settings. Create a free Upstash Redis and copy the REST URL. |
 | `REDIS_REST_TOKEN` | Pairs with the above. Set both or neither — half-configured is a deliberate startup error. |
 | `API_KEY` | Enables the control panel and settings API. Without it, writes are refused. |
 

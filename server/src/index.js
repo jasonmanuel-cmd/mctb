@@ -85,7 +85,11 @@ function createLogger(level = "info") {
  * file store would appear to save and then lose everything on the next cold
  * invocation - a silent failure that is much worse than a loud one.
  */
-export function selectStore(config, logger = console) {
+/**
+ * @param {boolean} [opts.ephemeralFs]  true when the filesystem does not
+ *   outlive the process, as on a serverless host.
+ */
+export function selectStore(config, logger = console, { ephemeralFs = false } = {}) {
   if (config.redisUrl && config.redisToken) {
     logger.info?.("store: redis");
     return createRedisStore({ url: config.redisUrl, token: config.redisToken });
@@ -94,6 +98,20 @@ export function selectStore(config, logger = console) {
   if (config.redisUrl || config.redisToken) {
     throw new Error(
       "REDIS_REST_URL and REDIS_REST_TOKEN must both be set; only one was provided",
+    );
+  }
+
+  if (ephemeralFs) {
+    // Refuse rather than start. On a serverless host the file store writes to a
+    // scratch directory that is discarded between invocations and is not shared
+    // between them, so subscriber settings would appear to save and then
+    // vanish - a silent failure that looks like a bug in the panel. Failing at
+    // startup turns that into a message naming the fix.
+    throw new Error(
+      "The file store cannot be used on a serverless host: its filesystem is " +
+        "ephemeral and not shared between invocations, so subscriber data would " +
+        "be lost. Set REDIS_REST_URL and REDIS_REST_TOKEN (a free Upstash Redis " +
+        "works), or run this as a long-lived process instead.",
     );
   }
 
@@ -146,7 +164,8 @@ export function selectBilling(config, logger = console) {
 export function buildApp(env = process.env) {
   const config = loadConfig(env);
   const logger = createLogger(env.LOG_LEVEL);
-  const store = selectStore(config, logger);
+  // Vercel sets VERCEL=1 in every function invocation.
+  const store = selectStore(config, logger, { ephemeralFs: Boolean(env.VERCEL) });
   const provider = createProvider(config);
   logger.info("provider", { name: provider.name });
   const billing = selectBilling(config, logger);
