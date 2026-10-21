@@ -21,6 +21,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,15 +45,22 @@ fun MessageEditorScreen(navController: NavController) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    val currentMessage by prefs.message.collectAsState(initial = AppPreferences.DEFAULT_MESSAGE)
-    var messageText by remember { mutableStateOf(currentMessage) }
+    val savedMessage by prefs.message.collectAsState(initial = AppPreferences.DEFAULT_MESSAGE)
 
-    // Update local state when DataStore value changes
-    if (messageText != currentMessage && messageText == AppPreferences.DEFAULT_MESSAGE) {
-        messageText = currentMessage
+    /**
+     * Seeded once from storage, then owned locally. The previous version compared
+     * the buffer against the default string on every recomposition, which meant a
+     * user's real edit could be overwritten by a late DataStore emission.
+     */
+    var messageText by remember { mutableStateOf("") }
+    var initialized by remember { mutableStateOf(false) }
+    LaunchedEffect(savedMessage) {
+        if (!initialized) {
+            messageText = savedMessage
+            initialized = true
+        }
     }
 
-    val maxLength = 160
     val charCount = messageText.length
 
     Scaffold(
@@ -61,7 +69,10 @@ fun MessageEditorScreen(navController: NavController) {
                 title = { Text(stringResource(R.string.message_editor_title)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.back)
+                        )
                     }
                 }
             )
@@ -79,13 +90,21 @@ fun MessageEditorScreen(navController: NavController) {
                 style = MaterialTheme.typography.titleMedium
             )
 
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = stringResource(R.string.message_editor_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             Spacer(modifier = Modifier.height(16.dp))
 
             OutlinedTextField(
                 value = messageText,
-                onValueChange = {
-                    if (it.length <= maxLength) {
-                        messageText = it
+                onValueChange = { input ->
+                    if (input.length <= AppPreferences.MAX_MESSAGE_LENGTH) {
+                        messageText = input
                     }
                 },
                 modifier = Modifier
@@ -94,7 +113,11 @@ fun MessageEditorScreen(navController: NavController) {
                 placeholder = { Text(stringResource(R.string.message_hint)) },
                 supportingText = {
                     Text(
-                        text = stringResource(R.string.char_count, charCount),
+                        text = stringResource(
+                            R.string.char_count,
+                            charCount,
+                            AppPreferences.MAX_MESSAGE_LENGTH
+                        ),
                         style = MaterialTheme.typography.bodySmall
                     )
                 },
@@ -106,16 +129,19 @@ fun MessageEditorScreen(navController: NavController) {
 
             Button(
                 onClick = {
-                    if (messageText.isNotBlank()) {
+                    if (messageText.isBlank()) {
                         scope.launch {
-                            prefs.setMessage(messageText)
-                            snackbarHostState.showSnackbar(context.getString(R.string.message_saved))
-                            navController.popBackStack()
+                            snackbarHostState.showSnackbar(
+                                context.getString(R.string.message_empty_error)
+                            )
                         }
-                    } else {
-                        scope.launch {
-                            snackbarHostState.showSnackbar(context.getString(R.string.message_empty_error))
-                        }
+                        return@Button
+                    }
+                    scope.launch {
+                        prefs.setMessage(messageText.trim())
+                        // Pop straight away. Awaiting the snackbar first would
+                        // hold the user on this screen until it auto-dismissed.
+                        navController.popBackStack()
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -127,9 +153,7 @@ fun MessageEditorScreen(navController: NavController) {
             Spacer(modifier = Modifier.height(12.dp))
 
             OutlinedButton(
-                onClick = {
-                    messageText = AppPreferences.DEFAULT_MESSAGE
-                },
+                onClick = { messageText = AppPreferences.DEFAULT_MESSAGE },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(stringResource(R.string.reset_default))

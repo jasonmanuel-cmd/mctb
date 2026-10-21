@@ -1,0 +1,16 @@
+{
+  "name": "mctb-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Missed Call Reply backend. Detects unanswered calls via Twilio and sends the auto-reply server-side.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {},
+  "comment": "Zero runtime dependencies on purpose: node:http, node:crypto and global fetch cover everything. No supply chain, and the test suite runs with no install step."
+}

@@ -13,13 +13,17 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.mctb.autoreply.ui.screens.ActiveHoursScreen
 import com.mctb.autoreply.ui.screens.HomeScreen
+import com.mctb.autoreply.ui.screens.HowItWorksScreen
 import com.mctb.autoreply.ui.screens.MessageEditorScreen
 import com.mctb.autoreply.ui.screens.UsageScreen
 import com.mctb.autoreply.ui.theme.AppTheme
 
 /**
- * Main activity for the app.
- * Sets up Jetpack Compose navigation and theming.
+ * Single-activity host for the Compose UI.
+ *
+ * There is deliberately no foreground service behind this app any more: call
+ * state arrives through a manifest-declared receiver, which the system wakes
+ * from a dead process. See [com.mctb.autoreply.receiver.PhoneStateReceiver].
  */
 class MainActivity : ComponentActivity() {
 
@@ -35,25 +39,23 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val navController = rememberNavController()
 
-                    NavHost(
-                        navController = navController,
-                        startDestination = "home"
-                    ) {
-                        composable("home") {
-                            HomeScreen(navController)
-                        }
-                        composable("message_editor") {
-                            MessageEditorScreen(navController)
-                        }
-                        composable("active_hours") {
-                            ActiveHoursScreen(navController)
-                        }
-                        composable("usage") {
-                            UsageScreen(navController)
-                        }
+                    NavHost(navController = navController, startDestination = ROUTE_HOME) {
+                        composable(ROUTE_HOME) { HomeScreen(navController) }
+                        composable(ROUTE_MESSAGE_EDITOR) { MessageEditorScreen(navController) }
+                        composable(ROUTE_ACTIVE_HOURS) { ActiveHoursScreen(navController) }
+                        composable(ROUTE_USAGE) { UsageScreen(navController) }
+                        composable(ROUTE_HOW_IT_WORKS) { HowItWorksScreen(navController) }
                     }
                 }
             }
         }
+    }
+
+    private companion object {
+        const val ROUTE_HOME = "home"
+        const val ROUTE_MESSAGE_EDITOR = "message_editor"
+        const val ROUTE_ACTIVE_HOURS = "active_hours"
+        const val ROUTE_USAGE = "usage"
+        const val ROUTE_HOW_IT_WORKS = "how_it_works"
     }
 }

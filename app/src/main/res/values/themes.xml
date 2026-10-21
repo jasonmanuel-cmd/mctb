@@ -1,4 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.MissedCallAutoReply" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+        Platform theme, not AppCompat/Material3 XML: Compose draws every pixel,
+        so the only job here is to avoid a white flash before the first frame.
+        A DayNight pair is provided instead of pulling in a whole extra library.
+    -->
+    <style name="Theme.MissedCallAutoReply" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background_light</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <!--
+        Hosts ReplyActivity, which has no content view: it exists only to charge
+        the reply and hand off to the messaging app.
+    -->
+    <style name="Theme.MissedCallAutoReply.Transparent" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

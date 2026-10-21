@@ -89,3 +89,12 @@ lint/tmp/
 
 # Mac
 .DS_Store
+
+# Python bytecode (tools/check_project.py)
+__pycache__/
+*.pyc
+
+# Server runtime data and dependencies
+server/data/
+server/node_modules/
+node_modules/
