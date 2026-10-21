@@ -10,7 +10,7 @@ import { PANEL_HTML } from "./panel.js";
  * well as over a real socket.
  */
 
-export function createApp({ store, provider, config, logger = console }) {
+export function createApp({ store, provider, config, logger = console, billing = null }) {
   /** Absolute URL Twilio signed. Behind a proxy this must come from config. */
   function absoluteUrl(req) {
     if (config.publicBaseUrl) return `${config.publicBaseUrl}${req.url}`;
@@ -111,6 +111,10 @@ export function createApp({ store, provider, config, logger = console }) {
           return send(res, 200, PANEL_HTML, { "Content-Type": "text/html; charset=utf-8" });
         }
 
+        if (req.method === "POST" && pathname === "/billing/verify") {
+          return await handleBillingVerify(req, res);
+        }
+
         if (pathname === "/subscribers") {
           return await handleSubscriberList(req, res);
         }
@@ -128,6 +132,7 @@ export function createApp({ store, provider, config, logger = console }) {
 
     // exported for direct testing without a socket
     handleVoice: (req, res) => handleVoice(req, res),
+    handleBillingVerify: (req, res) => handleBillingVerify(req, res),
     handleVoiceCompleted: (req, res) => handleVoiceCompleted(req, res),
   };
 
@@ -239,6 +244,68 @@ export function createApp({ store, provider, config, logger = console }) {
    * PUT  /subscribers/:twilioNumber   create or update
    * GET  /subscribers/:twilioNumber   read
    */
+  /**
+   * Verifies a Google Play purchase and lifts the free-tier limit.
+   *
+   * The purchase token is the only credential the app presents, and it is a
+   * bearer secret: it can be lifted off a device and replayed. Two defences
+   * follow from that. The token is checked against Google rather than
+   * trusted, and it is recorded on the subscriber and refused if a different
+   * number has already redeemed it - otherwise one purchase would unlock
+   * every number on the account.
+   *
+   * The reuse check runs before the Google call on purpose: a replayed token
+   * is the common case, and answering it locally costs no API quota.
+   */
+  async function handleBillingVerify(req, res) {
+    if (!billing) {
+      return send(res, 503, { error: "billing_not_configured" });
+    }
+
+    let body;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      return send(res, 400, { error: "invalid_json" });
+    }
+
+    const twilioNumber = digitsOf(body.twilioNumber ?? "");
+    if (!twilioNumber) return send(res, 400, { error: "invalid_number" });
+
+    const purchaseToken =
+      typeof body.purchaseToken === "string" ? body.purchaseToken.trim() : "";
+    if (!purchaseToken) return send(res, 400, { error: "missing_purchase_token" });
+
+    const existing = await store.byTwilioNumber(twilioNumber);
+    if (!existing) return send(res, 404, { error: "subscriber_not_found" });
+
+    // Re-verifying the same purchase is idempotent, so a retry after a dropped
+    // response cannot strand a paying customer.
+    if (existing.unlimited && existing.purchaseToken === purchaseToken) {
+      return send(res, 200, { unlocked: true, alreadyVerified: true });
+    }
+
+    const claimed = (await store.all()).find(
+      (sub) => sub.purchaseToken === purchaseToken && sub.twilioNumber !== twilioNumber,
+    );
+    if (claimed) return send(res, 409, { error: "purchase_already_redeemed" });
+
+    const result = await billing.verifyPurchase(config.playProductId, purchaseToken);
+    if (!result.valid) {
+      logger.warn("purchase rejected", { reason: result.reason });
+      return send(res, 402, { error: "purchase_not_verified", reason: result.reason });
+    }
+
+    await store.upsert(twilioNumber, {
+      unlimited: true,
+      purchaseToken,
+      purchasedAt: Date.now(),
+    });
+
+    logger.info("purchase verified", { twilioNumber, orderId: result.orderId ?? null });
+    return send(res, 200, { unlocked: true, orderId: result.orderId ?? null });
+  }
+
   async function handleSubscriber(req, res, pathname) {
     if (!bearerAuthed(req)) {
       return send(res, config.apiKey ? 401 : 503, {

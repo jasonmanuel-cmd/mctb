@@ -87,7 +87,37 @@ Then open `https://<your-host>/panel`, enter the `API_KEY`, and add your
 subscriber. Finally, call the Telnyx number from a phone and let it ring out —
 the reply should arrive as an SMS.
 
-## 5. The constraint that cannot be engineered away
+## 5. Play purchase verification (optional, needed to sell the unlock)
+
+Without this the free tier of 5 replies is the whole product: the app can take a
+payment but nothing server-side lifts the limit, and the server is what sends
+the replies.
+
+Set three variables:
+
+| Variable | Value |
+| --- | --- |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | The entire service account key JSON, as one value |
+| `GOOGLE_PLAY_PACKAGE_NAME` | `com.mctb.autoreply` |
+| `GOOGLE_PLAY_PRODUCT_ID` | `unlimited_replies` (the default) |
+
+To create the key: Google Cloud → IAM & Admin → Service Accounts → create one,
+grant it **no** project roles, then add it as a user in Play Console under
+*Users and permissions* with only "View financial data" and "Manage orders and
+subscriptions". Generate a JSON key and paste the whole file.
+
+The app then posts `{ "twilioNumber": "...", "purchaseToken": "..." }` to
+`POST /billing/verify`, which asks Google whether that token is real and still
+purchased before flipping `unlimited`. The token is recorded, so one purchase
+cannot unlock a second number.
+
+Note that `POST /billing/verify` is deliberately **not** behind the operator
+`API_KEY` — the app is the customer and must not hold the key that configures
+every number. Verification against Google is the authorisation. That does mean
+per-subscriber API tokens are still the missing piece for letting customers
+self-serve their own settings.
+
+## 6. The constraint that cannot be engineered away
 
 Callers must dial **the Telnyx number**, not the subscriber's personal SIM.
 Neither Telnyx nor Twilio can see a call that never reaches them, and carrier
@@ -95,7 +125,7 @@ call-forward-on-no-answer is not a workaround: the server would dial the number
 that just forwarded, and loop. The subscriber publishes the Telnyx number as
 their work line.
 
-## 6. Android app — still blocked
+## 7. Android app — still blocked
 
 The Play Store side has never been compiled. GitHub Actions refuses to start any
 job on this repository with:

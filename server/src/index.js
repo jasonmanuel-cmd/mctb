@@ -2,6 +2,8 @@ import http from "node:http";
 import { createStore } from "./store.js";
 import { createRedisStore } from "./store-redis.js";
 import { createProvider } from "./provider.js";
+import { createGoogleTokenSource } from "./google-auth.js";
+import { createPlayBillingClient } from "./play-billing.js";
 import { createApp } from "./routes.js";
 
 /**
@@ -52,6 +54,12 @@ function loadConfig(env = process.env) {
     redisUrl: env.REDIS_REST_URL ?? "",
     redisToken: env.REDIS_REST_TOKEN ?? "",
     apiKey: env.API_KEY ?? "",
+    // Play purchase verification. The package and product are fixed here
+    // rather than taken from the request, so a client cannot claim a purchase
+    // against some other app or product.
+    playPackageName: env.GOOGLE_PLAY_PACKAGE_NAME ?? "",
+    playProductId: env.GOOGLE_PLAY_PRODUCT_ID ?? "unlimited_replies",
+    playServiceAccountJson: env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON ?? "",
     maxBodyBytes: 64 * 1024,
   };
 }
@@ -94,6 +102,41 @@ export function selectStore(config, logger = console) {
 }
 
 /**
+ * Builds the Play purchase verifier, or null when it is not configured.
+ *
+ * Absent configuration is not an error: the free tier is the whole product
+ * until someone sets up a Play Console service account. What must not happen
+ * is a *half*-configured verifier, so a malformed key fails loudly at startup
+ * instead of turning every purchase into a 500.
+ */
+export function selectBilling(config, logger = console) {
+  if (!config.playServiceAccountJson) return null;
+
+  let serviceAccount;
+  try {
+    serviceAccount = JSON.parse(config.playServiceAccountJson);
+  } catch (err) {
+    throw new Error(`GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is not valid JSON: ${err.message}`);
+  }
+
+  if (!config.playPackageName) {
+    throw new Error(
+      "GOOGLE_PLAY_PACKAGE_NAME is required when GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is set",
+    );
+  }
+
+  const { getAccessToken } = createGoogleTokenSource({ serviceAccount });
+  logger.info?.("billing: google play", {
+    packageName: config.playPackageName,
+    productId: config.playProductId,
+  });
+  return createPlayBillingClient({
+    packageName: config.playPackageName,
+    getAccessToken,
+  });
+}
+
+/**
  * Wires the application without starting a listener.
  *
  * Split out from buildServer so the serverless adapter can reuse the exact same
@@ -106,7 +149,8 @@ export function buildApp(env = process.env) {
   const store = selectStore(config, logger);
   const provider = createProvider(config);
   logger.info("provider", { name: provider.name });
-  const app = createApp({ store, provider, config, logger });
+  const billing = selectBilling(config, logger);
+  const app = createApp({ store, provider, config, logger, billing });
   return { app, store, provider, config, logger };
 }
 

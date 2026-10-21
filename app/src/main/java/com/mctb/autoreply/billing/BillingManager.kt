@@ -51,8 +51,15 @@ sealed interface UnlockOffer {
  * expected state, and by design that never blocks the free tier.
  *
  * Security note: purchases are verified only as "signed by Play and
- * acknowledged". There is no server to validate against, which is acceptable for
- * a low-value one-time unlock but would not be for anything expensive.
+ * acknowledged" on-device, which proves nothing to anyone else - a purchase
+ * token can be lifted off a rooted device and replayed.
+ *
+ * The server now has the authoritative check (`POST /billing/verify`, which
+ * asks the Play Developer API whether the token is real and still purchased
+ * before lifting the limit). This class does not call it yet: that needs a
+ * configured server base URL, which is not plumbed through preferences. Until
+ * it is, an unlock applies on this device only and does not lift the limit for
+ * server-mode replies.
  */
 class BillingManager(
     private val activity: Activity

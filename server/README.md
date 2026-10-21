@@ -9,12 +9,12 @@ Android app.
 - Zero runtime dependencies. `node:http`, `node:crypto`, global `fetch`.
 - Node 20+.
 - Works with **Twilio or Telnyx** behind one provider seam.
-- 97 tests, including integration tests over real sockets with real webhook
+- 110 tests, including integration tests over real sockets with real webhook
   signatures (HMAC-SHA1 for Twilio, Ed25519 for Telnyx). No mocking of the HTTP
   layer, no network access needed to run them.
 
 ```
-npm test      # 97 tests, ~1.2s
+npm test      # 110 tests, ~1.2s
 npm start     # needs the env vars below
 ```
 
@@ -78,6 +78,9 @@ Environment:
 | `REDIS_REST_URL` | no | Redis REST endpoint; enables the serverless backend |
 | `REDIS_REST_TOKEN` | no | pairs with `REDIS_REST_URL` — set both or neither |
 | `API_KEY` | no | enables the settings API and panel; without it writes are refused |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | no | service account key JSON; enables purchase verification |
+| `GOOGLE_PLAY_PACKAGE_NAME` | with the above | the Android application id |
+| `GOOGLE_PLAY_PRODUCT_ID` | no | in-app product id, default `unlimited_replies` |
 | `LOG_LEVEL` | no | `debug`/`info`/`warn`/`error`, default `info` |
 
 `PUBLIC_BASE_URL` is not cosmetic. **Twilio** signs the full URL it called, so if you
@@ -236,9 +239,11 @@ five methods.
 
 ## What is not done
 
-- **No billing.** The free tier of 5 is enforced (`quota-exhausted`), but there is
-  no Stripe/Play bridge to flip `unlimited`. That is a `PUT` away once a payment
-  provider is chosen.
+- **Refunds are not revoked automatically.** A cancelled purchase is refused at
+  verification time, but a refund *after* the unlock is not detected: the Play
+  Developer API answer for a refunded in-app product is not reliably immediate.
+  Closing that needs the Voided Purchases API or Real-time Developer
+  Notifications on a schedule.
 - **The control panel is operator-facing.** It authenticates with the single
   `API_KEY`, so it configures *every* number. There is no per-subscriber access, so
   you cannot hand it to a customer to self-serve — that needs a per-subscriber token
