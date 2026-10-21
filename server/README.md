@@ -9,12 +9,12 @@ Android app.
 - Zero runtime dependencies. `node:http`, `node:crypto`, global `fetch`.
 - Node 20+.
 - Works with **Twilio or Telnyx** behind one provider seam.
-- 88 tests, including integration tests over real sockets with real webhook
+- 94 tests, including integration tests over real sockets with real webhook
   signatures (HMAC-SHA1 for Twilio, Ed25519 for Telnyx). No mocking of the HTTP
   layer, no network access needed to run them.
 
 ```
-npm test      # 88 tests, ~1.2s
+npm test      # 94 tests, ~1.2s
 npm start     # needs the env vars below
 ```
 
@@ -86,6 +86,40 @@ and every webhook will 403. Set it explicitly.
 
 Then point each number's voice webhook at `https://you/voice` (POST), and the call
 progress / status callback at `https://you/voice/completed`.
+
+### Vercel
+
+`api/index.js` is a serverless adapter over the same `app.handle` the
+long-running server uses, so both hosting models share one routing path and a
+fix in one cannot survive as a bug in the other.
+
+`vercel.json` rewrites every non-`/api` path to the function and forwards the
+original path as `?__path=`:
+
+```json
+{ "source": "/((?!api/).*)", "destination": "/api?__path=/$1" }
+```
+
+That forwarding is not decorative. Whether a rewrite preserves `req.url` depends
+on the runtime and function type — Vercel's routing docs say the destination
+"only selects which route runs, not the path your code sees", but there are
+filed cases of every request arriving as the destination path and 404ing. Rather
+than bet on one behaviour, the adapter treats `__path` as authoritative when
+present and falls back to `req.url` when running under node.
+
+`req.url` is then rewritten in place, because `routes.js` builds the webhook
+signature URL as `publicBaseUrl + req.url`. Leaving `?__path=` attached would
+fail verification on **every** Twilio webhook: Twilio signs the URL it
+requested, not the rewritten one.
+
+Three things to get right on the project settings:
+
+- **Root Directory** must be `server`.
+- **Deployment Protection** (SSO) is on by default for new projects and answers
+  carrier webhooks with a 401. Turn it off, or no call will ever be seen.
+- The **file store does not work on serverless** — the filesystem is ephemeral
+  and not shared between invocations, so subscriber settings vanish silently.
+  Configure Upstash Redis (`REDIS_REST_URL` + `REDIS_REST_TOKEN`).
 
 ### Smoke test
 

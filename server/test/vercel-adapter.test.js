@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import handler, { __resetApp } from "../api/index.js";
+import { computeTwilioSignature } from "../src/signature.js";
 
 /**
  * The serverless adapter, exercised directly with mock req/res.
@@ -172,5 +173,117 @@ test("the control panel is served through the adapter", async () => {
     assert.equal(res.statusCode, 200);
     assert.match(String(res.headers["content-type"]), /text\/html/);
     assert.match(String(res.payload), /Missed Call Reply/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Path forwarding across a rewrite
+//
+// Whether Vercel preserves req.url through a rewrite depends on runtime and
+// function type, so the original path is forwarded as ?__path=. These tests
+// cover both behaviours so the adapter cannot be silently broken by either.
+// ---------------------------------------------------------------------------
+
+test("routes correctly when the rewrite flattens req.url", async () => {
+  await withEnv(validEnv(), async () => {
+    const res = mockRes();
+    await handler({ method: "GET", url: "/api?__path=/panel", headers: {} }, res);
+    assert.equal(res.statusCode, 200);
+    assert.match(String(res.payload), /Missed Call Reply/);
+  });
+});
+
+test("routes correctly when the rewrite preserves req.url", async () => {
+  await withEnv(validEnv(), async () => {
+    const res = mockRes();
+    // Both the original path and the forwarded copy present - the common case.
+    await handler({ method: "GET", url: "/panel?__path=/panel", headers: {} }, res);
+    assert.equal(res.statusCode, 200);
+    assert.match(String(res.payload), /Missed Call Reply/);
+  });
+});
+
+test("a signed webhook still verifies when delivered in flattened form", async () => {
+  // The regression this guards: Twilio signs the URL *it requested*. If
+  // ?__path= were left on req.url, routes.js would sign
+  // "<base>/api?__path=/voice/completed" and 403 every webhook.
+  await withEnv(validEnv(), async () => {
+    const params = { From: "+15550101234", To: "+15559000001", CallStatus: "no-answer" };
+    const body = new URLSearchParams(params).toString();
+    const signature = computeTwilioSignature({
+      url: "https://mctb.example.com/voice/completed",
+      params,
+      authToken: "tok",
+    });
+
+    const res = mockRes();
+    await handler(
+      {
+        method: "POST",
+        url: "/api?__path=/voice/completed",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          "x-twilio-signature": signature,
+        },
+        body,
+      },
+      res,
+    );
+
+    assert.notEqual(res.statusCode, 403, "signature must survive path forwarding");
+    // An authenticated missed call with no subscriber configured answers with
+    // Twiml XML. That the body is XML at all proves the request cleared
+    // verification and reached the call-flow handler.
+    assert.match(String(res.payload), /<\?xml|<Response>/);
+  });
+});
+
+test("the forwarded path is normalised before the adapter routes on it", async () => {
+  await withEnv(validEnv(), async () => {
+    const res = mockRes();
+    // routes.js re-parses req.url with new URL(), so dot segments are
+    // normalised downstream regardless. The difference is visible here, where
+    // the adapter's own healthz check is a raw string compare: only if
+    // resolvePath normalises does the adapter answer this itself, and only its
+    // answer carries `runtime: "serverless"`.
+    await handler({ method: "GET", url: "/api?__path=/./healthz", headers: {} }, res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(JSON.parse(res.payload), { ok: true, runtime: "serverless" });
+  });
+});
+
+test("a protocol-relative __path does not become a route", async () => {
+  await withEnv(validEnv(), async () => {
+    const res = mockRes();
+    // Parsing strips the host, leaving "/nope". Worth keeping as a regression
+    // guard, though note it is not load-bearing on its own: the raw value
+    // "//evil.com/nope" matches no route either, so this passes with or
+    // without the parse. The normalisation test above is the one that
+    // distinguishes.
+    await handler({ method: "GET", url: "/api?__path=//evil.com/nope", headers: {} }, res);
+    assert.notEqual(res.statusCode, 200);
+    assert.ok(!String(res.payload ?? "").includes("evil.com"));
+  });
+});
+
+test("a real query string survives alongside the forwarded path", async () => {
+  await withEnv({ ...validEnv(), API_KEY: "sekret" }, async () => {
+    const res = mockRes();
+    await handler(
+      {
+        method: "PUT",
+        url: "/api?__path=/subscribers/%2B15559000001&foo=bar",
+        headers: { authorization: "Bearer sekret" },
+        body: JSON.stringify({
+          enabled: true,
+          forwardTo: "+15558000002",
+          message: "On a job.",
+        }),
+      },
+      res,
+    );
+    // The unrelated query param must not disturb path resolution or the body.
+    assert.equal(res.statusCode, 200);
+    assert.equal(JSON.parse(res.payload).forwardTo, "+15558000002");
   });
 });

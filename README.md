@@ -13,7 +13,7 @@ There are **two delivery modes** in this repo, and the difference matters:
 | Where it runs | Your host | The subscriber's phone |
 | Callers dial | Your Twilio number | Any number |
 | Needs Play Store | No | Yes |
-| Status | **Working and tested** (88 tests) | **Never compiled** |
+| Status | **Working and tested** (94 tests) | **Never compiled** |
 
 ---
 
@@ -159,7 +159,7 @@ No build step. No dependencies to install.
 
 ```bash
 cd server
-npm test     # 88 tests
+npm test     # 94 tests
 npm start    # requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, PUBLIC_BASE_URL
 ```
 
@@ -172,7 +172,7 @@ placeholders, fully functional" and had never been compiled.
 
 **Checked**
 
-- **`server/` — 88 tests, all passing (`npm test`, Node 22.22.3).** Integration tests
+- **`server/` — 94 tests, all passing (`npm test`, Node 22.22.3).** Integration tests
   drive the real HTTP server over a real socket with correctly-signed Twilio webhooks:
   forwarded-call TwiML, `no-answer` → SMS sent, `completed` → nothing sent, unsigned
   and tampered signatures 403'd, per-caller debounce, free-tier quota cutoff, and
