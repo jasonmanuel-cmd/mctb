@@ -93,19 +93,31 @@ export function selectStore(config, logger = console) {
   return createStore(config.storePath);
 }
 
-export function buildServer(env = process.env) {
+/**
+ * Wires the application without starting a listener.
+ *
+ * Split out from buildServer so the serverless adapter can reuse the exact same
+ * wiring - one code path for both hosting models, so a bug fixed in one cannot
+ * survive in the other.
+ */
+export function buildApp(env = process.env) {
   const config = loadConfig(env);
   const logger = createLogger(env.LOG_LEVEL);
   const store = selectStore(config, logger);
   const provider = createProvider(config);
   logger.info("provider", { name: provider.name });
   const app = createApp({ store, provider, config, logger });
+  return { app, store, provider, config, logger };
+}
+
+export function buildServer(env = process.env) {
+  const { app, store, provider, config, logger } = buildApp(env);
 
   const server = http.createServer((req, res) => {
     app.handle(req, res);
   });
 
-  return { server, store, app, config, logger };
+  return { server, store, app, provider, config, logger };
 }
 
 const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
