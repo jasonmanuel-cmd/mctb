@@ -519,3 +519,29 @@ test("an oversized pre-buffered body is rejected", async () => {
   await app.handle(req, res);
   assert.equal(res.statusCode, 413);
 });
+
+test("the panel offers a token reveal without baking any token into the page", async (t) => {
+  const s = await startServer({ apiKey: "sekret" });
+  t.after(() => s.close());
+  await seedSubscriber(s.store);
+
+  const list = await (
+    await fetch(`${s.base}/subscribers`, { headers: { Authorization: "Bearer sekret" } })
+  ).json();
+  const number = list.subscribers[0].twilioNumber;
+  const { apiToken } = await (
+    await fetch(`${s.base}/subscribers/${encodeURIComponent(number)}/token`, {
+      headers: { Authorization: "Bearer sekret" },
+    })
+  ).json();
+  assert.ok(apiToken, "expected a token to exist to check for");
+
+  const html = await (await fetch(`${s.base}/panel`)).text();
+
+  // The affordance has to be there...
+  assert.match(html, /revealToken/, "the panel must offer to fetch a token");
+
+  // ...but the credential must not be. It is a bearer secret, so it is fetched
+  // on click rather than rendered for every subscriber at once.
+  assert.ok(!html.includes(apiToken), "subscriber token leaked into the served HTML");
+});

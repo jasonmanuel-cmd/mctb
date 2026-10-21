@@ -1,6 +1,6 @@
 # Deploying Missed Call Reply
 
-Status as of this branch: the server is complete and tested (**131 tests**,
+Status as of this branch: the server is complete and tested (**132 tests**,
 `cd server && npm test`). What follows is everything that still needs a human,
 because each step needs credentials or account access that cannot be handled
 from a checkout.
@@ -19,7 +19,7 @@ from a checkout.
 
 **Production is deployed and current** — `dpl_FrGMswmpGmcSgH2y34hkhQcASE7j`,
 status READY and promoted, built from `c160398`. That is the tip of this branch,
-so production runs the code the 131 tests cover. The build environment confirms
+so production runs the code the 132 tests cover. The build environment confirms
 `PROVIDER`, `PUBLIC_BASE_URL` and `GOOGLE_PLAY_PACKAGE_NAME` reached it.
 
 Confirmed by this: packaging, ESM detection, function discovery, and the rewrite

@@ -39,6 +39,11 @@ export const PANEL_HTML = `<!doctype html>
   li { border: 1px solid var(--line); border-radius: 6px; padding: 12px; margin-bottom: 8px;
        cursor: pointer; }
   li b { font-weight: 600; }
+  .tok {
+    font: inherit; font-size: 0.75rem; padding: 0.1rem 0.4rem;
+    border: 1px solid var(--line); border-radius: 4px;
+    background: transparent; color: var(--fg); cursor: pointer;
+  }
   .pill { font-size: .75rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); }
   .hidden { display: none; }
   hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
@@ -171,6 +176,21 @@ export const PANEL_HTML = `<!doctype html>
         li.appendChild(pill);
         li.appendChild(document.createTextNode('   ' + (s.forwardTo || 'no forwarding number')));
         li.onclick = function () { load(s); };
+
+        // Fetched on click rather than rendered with the list: this is a
+        // bearer credential, and it has no business sitting in the page source
+        // or the browser cache for every subscriber at once.
+        var tok = document.createElement('button');
+        tok.type = 'button';
+        tok.className = 'tok';
+        tok.textContent = 'token';
+        tok.onclick = function (ev) {
+          ev.stopPropagation();
+          revealToken(s.twilioNumber, tok);
+        };
+        li.appendChild(document.createTextNode('   '));
+        li.appendChild(tok);
+
         ul.appendChild(li);
       });
       if (!(j.subscribers || []).length) {
@@ -180,6 +200,15 @@ export const PANEL_HTML = `<!doctype html>
         ul.appendChild(empty);
       }
     }).catch(function (e) { show('saveMsg', 'err', e.message); });
+  }
+
+  function revealToken(number, btn) {
+    api('/subscribers/' + encodeURIComponent(number) + '/token')
+      .then(function (j) {
+        btn.textContent = j.apiToken || '(none issued)';
+        btn.title = 'Give this to the subscriber for the app, along with the server address.';
+      })
+      .catch(function (e) { show('saveMsg', 'err', e.message); });
   }
 
   function show(id, kind, text) {
