@@ -1,67 +1,98 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Auto-Reply</string>
+    <string name="app_name">Missed Call Reply</string>
 
-    <!-- Home Screen -->
-    <string name="enable_auto_reply">Enable Auto-Reply</string>
-    <string name="status_active">Auto-reply is active during work hours</string>
-    <string name="status_inactive">Auto-reply is turned off</string>
+    <!-- Home -->
+    <string name="enable_auto_reply">Auto-reply</string>
+    <string name="status_active">Watching for missed calls</string>
+    <string name="status_inactive">Turned off</string>
+    <string name="status_window_always">Replies any time, day or night</string>
+    <string name="status_window_between">Replies between %1$s and %2$s</string>
     <string name="usage_label">Usage</string>
-    <string name="usage_count">%1$d / %2$d free texts used</string>
+    <string name="usage_count">%1$d / %2$d replies used</string>
     <string name="usage_unlimited">Unlimited</string>
-    <string name="configure_message">Configure Message</string>
-    <string name="configure_hours">Configure Hours</string>
-    <string name="view_usage">View Usage</string>
+    <string name="view_usage">View usage</string>
+    <string name="configure_message">Edit reply message</string>
+    <string name="configure_hours">Set active hours</string>
 
-    <!-- Message Editor -->
-    <string name="message_editor_title">Auto-Reply Message</string>
-    <string name="message_hint">Enter your auto-reply message</string>
-    <string name="char_count">%1$d / 160 characters</string>
-    <string name="reset_default">Reset to Default</string>
+    <!-- Setup / permissions -->
+    <string name="setup_required_title">Two things to allow first</string>
+    <string name="setup_required_desc">Android asks you to approve these directly. Both can be revoked later in Settings.</string>
+    <string name="setup_step_call_screening">Call screening - lets the app see who is calling</string>
+    <string name="setup_step_notifications">Notifications - how the reply prompt reaches you</string>
+    <string name="setup_step_grant">Allow</string>
+
+    <!-- Message editor -->
+    <string name="message_editor_title">Reply message</string>
+    <string name="message_label">What should the reply say?</string>
+    <string name="message_editor_hint">You still tap send yourself, so you can change it before it goes.</string>
+    <string name="message_hint">Enter your reply message</string>
+    <string name="char_count">%1$d / %2$d characters</string>
+    <string name="reset_default">Reset to default</string>
     <string name="save">Save</string>
-    <string name="default_message">Hi! I missed your call and I\'m working right now. I\'ll call you back as soon as I can. Thanks!</string>
-    <string name="message_saved">Message saved successfully</string>
     <string name="message_empty_error">Message cannot be empty</string>
 
-    <!-- Active Hours -->
-    <string name="active_hours_title">Active Hours</string>
-    <string name="always_active">Always Active</string>
-    <string name="always_active_desc">Send auto-replies 24/7</string>
-    <string name="start_time">Start Time</string>
-    <string name="end_time">End Time</string>
-    <string name="time_format">%02d:%02d</string>
-    <string name="active_hours_desc">Auto-replies will only be sent during these hours</string>
-    <string name="hours_saved">Hours saved successfully</string>
+    <!-- Active hours -->
+    <string name="active_hours_title">Active hours</string>
+    <string name="always_active">Always active</string>
+    <string name="always_active_desc">Prompt for a reply around the clock</string>
+    <string name="active_hours_desc">Prompts are only shown inside this window.</string>
+    <string name="start_time">From</string>
+    <string name="end_time">Until</string>
+    <string name="same_time_note">Setting the same start and end time counts as all day.</string>
 
-    <!-- Usage Screen -->
-    <string name="usage_title">Usage &amp; Limits</string>
-    <string name="free_tier_title">Free Tier</string>
-    <string name="free_tier_desc">You get 5 free automated text messages. After that, upgrade to continue using auto-reply.</string>
-    <string name="limit_reached_title">Limit Reached</string>
-    <string name="limit_reached_desc">You\'ve used all 5 free auto-texts. Upgrade to unlimited to continue.</string>
-    <string name="upgrade_button">Upgrade to Unlimited</string>
-    <string name="upgrade_placeholder">Payment integration coming soon</string>
+    <!-- Usage / billing -->
+    <string name="usage_title">Usage and plan</string>
+    <string name="free_tier_title">Free plan</string>
+    <string name="free_tier_desc">You get 5 reply prompts free. Upgrade any time to keep going.</string>
+    <string name="limit_reached_title">Free replies used up</string>
+    <string name="limit_reached_desc">You have sent 5 replies. Upgrade to unlimited to keep using auto-reply.</string>
+    <string name="unlocked_title">Unlimited</string>
+    <string name="unlocked_desc">Thanks for upgrading - there is no cap on replies.</string>
+    <string name="upgrade_title">Unlimited replies</string>
+    <string name="upgrade_desc">One-time purchase. Removes the reply cap on this Google account, forever.</string>
+    <string name="upgrade_button">Upgrade to unlimited</string>
+    <string name="upgrade_button_with_price">Upgrade to unlimited - %1$s</string>
+    <string name="purchase_thanks">Unlimited is active</string>
+    <string name="restore_purchases">Restore purchase</string>
+    <string name="loading_offer">Checking your plan…</string>
+    <string name="offer_unavailable_title">Upgrade unavailable right now</string>
+    <string name="offer_unavailable_desc">Google Play could not load the upgrade. Your free replies still work. Check your connection and try again.</string>
+    <string name="retry">Try again</string>
 
-    <!-- Permissions -->
-    <string name="permissions_required_title">Permissions Required</string>
-    <string name="permissions_required_desc">This app needs the following permissions to function:\n\n• Phone State - Detect incoming calls\n• Call Log - Identify missed calls\n• Send SMS - Send auto-reply messages\n• Notifications - Show service status</string>
-    <string name="grant_permissions">Grant Permissions</string>
-    <string name="permission_denied">Permission denied. The app won\'t work without required permissions.</string>
+    <!-- How it works -->
+    <string name="how_it_works_title">How it works</string>
+    <string name="how_step1_title">1. A call comes in</string>
+    <string name="how_step1_body">Android tells the app the number that is calling, before the phone rings. Nothing is stored beyond the call currently in progress.</string>
+    <string name="how_step2_title">2. You do not answer</string>
+    <string name="how_step2_body">If the call rings out or you decline it, a notification appears straight away with your message ready to go.</string>
+    <string name="how_step3_title">3. One tap to send</string>
+    <string name="how_step3_body">Tap the action on the notification and your own messaging app opens with the number and message filled in. You press send.</string>
+    <string name="how_privacy_title">What this app does not do</string>
+    <string name="how_privacy_body">No call log is read and no messages are sent behind your back. Numbers are kept on this device only, for 30 minutes, purely to avoid texting the same person twice. Nothing is uploaded.</string>
+    <string name="how_limits_title">Worth knowing</string>
+    <string name="how_limits_body">Android only passes on calls from numbers that are not in your contacts, so saved contacts will not trigger a prompt. Calls from withheld or private numbers cannot be replied to, because there is no number to send to.</string>
 
-    <!-- Battery Optimization -->
-    <string name="battery_optimization_title">Battery Optimization</string>
-    <string name="battery_optimization_desc">For reliable operation, please disable battery optimization for this app.</string>
-    <string name="disable_optimization">Disable Optimization</string>
+    <!-- Notification -->
+    <string name="notification_channel_name">Missed call replies</string>
+    <string name="notification_channel_desc">Shown when a call is missed and a reply is ready to send</string>
+    <string name="missed_call_title">Missed call from %1$s</string>
+    <string name="missed_call_action_send">Send reply</string>
 
-    <!-- Service Notification -->
-    <string name="notification_channel_name">Call Monitoring</string>
-    <string name="notification_channel_desc">Persistent notification while monitoring for missed calls</string>
-    <string name="notification_title">Auto-reply active</string>
-    <string name="notification_text">Monitoring for missed calls</string>
+    <!-- Errors -->
+    <string name="error_no_messaging_app">No messaging app found to send the reply</string>
+
+    <!-- Server connection -->
+    <string name="server_card_title">Reply server</string>
+    <string name="server_card_body">Replies are sent by the server, so it has to know about your upgrade. Enter the address and token you were given.</string>
+    <string name="server_url_label">Server address</string>
+    <string name="server_token_label">Your token</string>
+    <string name="server_save">Save</string>
+    <string name="server_saved">Server details saved</string>
+    <string name="server_incomplete">Enter both the address and the token</string>
 
     <!-- Common -->
     <string name="ok">OK</string>
     <string name="cancel">Cancel</string>
-    <string name="close">Close</string>
     <string name="back">Back</string>
 </resources>

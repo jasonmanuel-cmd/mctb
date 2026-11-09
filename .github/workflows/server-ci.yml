@@ -1,0 +1,65 @@
+name: Server CI
+
+# Unlike android-ci.yml, every step here runs. The backend has no toolchain
+# that needs downloading beyond Node itself, so this workflow is a real gate
+# rather than an aspiration.
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "server/**"
+      - ".github/workflows/server-ci.yml"
+  pull_request:
+    paths:
+      - "server/**"
+      - ".github/workflows/server-ci.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the floor declared in package.json engines; 22 is LTS.
+        node: [20, 22]
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # There are no dependencies to install; this only primes the cache and
+      # fails loudly if package.json ever becomes invalid.
+      - run: npm ci --ignore-scripts --no-audit --no-fund || npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Unit and integration tests
+        run: npm test
+
+      - name: Server boots and refuses to start without credentials
+        run: |
+          set -e
+          # Must exit non-zero and name the missing variable.
+          if node src/index.js 2>&1 | grep -q "Missing required environment variable"; then
+            echo "ok: refuses to start without credentials"
+          else
+            echo "FAIL: started without credentials" >&2
+            exit 1
+          fi
+
+          # Must come up and answer /healthz when configured.
+          TWILIO_ACCOUNT_SID=ACci TWILIO_AUTH_TOKEN=ci \
+            PUBLIC_BASE_URL=https://ci.example.com PORT=8931 \
+            STORE_PATH="$RUNNER_TEMP/subs.json" node src/index.js &
+          SRV=$!
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:8931/healthz > /dev/null 2>&1; then break; fi
+            sleep 0.2
+          done
+          curl -fsS http://127.0.0.1:8931/healthz | grep -q '"ok":true'
+          echo "ok: booted and answered healthz"
+          kill $SRV

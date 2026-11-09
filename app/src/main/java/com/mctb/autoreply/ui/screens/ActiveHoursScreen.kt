@@ -12,21 +12,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Dialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
-import androidx.compose.material3.TimePickerState
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,10 +39,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import androidx.navigation.NavController
 import com.mctb.autoreply.R
 import com.mctb.autoreply.data.AppPreferences
+import com.mctb.autoreply.domain.ActiveHours
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,22 +51,38 @@ fun ActiveHoursScreen(navController: NavController) {
     val context = LocalContext.current
     val prefs = remember { AppPreferences(context) }
     val scope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
 
-    val startHour by prefs.startHour.collectAsState(initial = AppPreferences.DEFAULT_START_HOUR)
-    val startMinute by prefs.startMinute.collectAsState(initial = AppPreferences.DEFAULT_START_MINUTE)
-    val endHour by prefs.endHour.collectAsState(initial = AppPreferences.DEFAULT_END_HOUR)
-    val endMinute by prefs.endMinute.collectAsState(initial = AppPreferences.DEFAULT_END_MINUTE)
-    val isAlwaysOn by prefs.isAlwaysOn.collectAsState(initial = false)
+    val savedAlwaysOn by prefs.isAlwaysOn.collectAsState(initial = false)
+    val savedStart by prefs.startMinuteOfDay.collectAsState(
+        initial = ActiveHours.minuteOfDay(
+            AppPreferences.DEFAULT_START_HOUR,
+            AppPreferences.DEFAULT_START_MINUTE
+        )
+    )
+    val savedEnd by prefs.endMinuteOfDay.collectAsState(
+        initial = ActiveHours.minuteOfDay(
+            AppPreferences.DEFAULT_END_HOUR,
+            AppPreferences.DEFAULT_END_MINUTE
+        )
+    )
 
-    var localAlwaysOn by remember { mutableStateOf(isAlwaysOn) }
-    var localStartHour by remember { mutableStateOf(startHour) }
-    var localStartMinute by remember { mutableStateOf(startMinute) }
-    var localEndHour by remember { mutableStateOf(endHour) }
-    var localEndMinute by remember { mutableStateOf(endMinute) }
+    var alwaysOn by remember { mutableStateOf(savedAlwaysOn) }
+    var startMinute by remember { mutableStateOf(savedStart) }
+    var endMinute by remember { mutableStateOf(savedEnd) }
 
-    var showStartTimePicker by remember { mutableStateOf(false) }
-    var showEndTimePicker by remember { mutableStateOf(false) }
+    /** Seeds the local buffer once the stored values arrive. */
+    var initialized by remember { mutableStateOf(false) }
+    LaunchedEffect(savedAlwaysOn, savedStart, savedEnd) {
+        if (!initialized) {
+            alwaysOn = savedAlwaysOn
+            startMinute = savedStart
+            endMinute = savedEnd
+            initialized = true
+        }
+    }
+
+    var showStartPicker by remember { mutableStateOf(false) }
+    var showEndPicker by remember { mutableStateOf(false) }
 
     Scaffold(
         topAppBar = {
@@ -74,12 +90,14 @@ fun ActiveHoursScreen(navController: NavController) {
                 title = { Text(stringResource(R.string.active_hours_title)) },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.back)
+                        )
                     }
                 }
             )
-        },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        }
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -88,7 +106,6 @@ fun ActiveHoursScreen(navController: NavController) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Always On switch
             Card(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
@@ -97,7 +114,7 @@ fun ActiveHoursScreen(navController: NavController) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Column(modifier = Modifier.padding(end = 16.dp)) {
                         Text(
                             text = stringResource(R.string.always_active),
                             style = MaterialTheme.typography.titleMedium,
@@ -108,76 +125,45 @@ fun ActiveHoursScreen(navController: NavController) {
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    Switch(
-                        checked = localAlwaysOn,
-                        onCheckedChange = { localAlwaysOn = it }
-                    )
+                    Switch(checked = alwaysOn, onCheckedChange = { alwaysOn = it })
                 }
             }
 
-            // Time selection (disabled when always on)
-            if (!localAlwaysOn) {
+            if (!alwaysOn) {
                 Text(
                     text = stringResource(R.string.active_hours_desc),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                // Start time
-                Column {
-                    Text(
-                        text = stringResource(R.string.start_time),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = { showStartTimePicker = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = stringResource(R.string.time_format, localStartHour, localStartMinute),
-                            style = MaterialTheme.typography.titleLarge
-                        )
-                    }
-                }
+                TimeField(
+                    label = stringResource(R.string.start_time),
+                    minuteOfDay = startMinute,
+                    onClick = { showStartPicker = true }
+                )
 
-                // End time
-                Column {
-                    Text(
-                        text = stringResource(R.string.end_time),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = { showEndTimePicker = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = stringResource(R.string.time_format, localEndHour, localEndMinute),
-                            style = MaterialTheme.typography.titleLarge
-                        )
-                    }
-                }
+                TimeField(
+                    label = stringResource(R.string.end_time),
+                    minuteOfDay = endMinute,
+                    onClick = { showEndPicker = true }
+                )
+
+                Text(
+                    text = stringResource(R.string.same_time_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Save button
             Button(
                 onClick = {
                     scope.launch {
-                        prefs.setAlwaysOn(localAlwaysOn)
-                        if (!localAlwaysOn) {
-                            prefs.setActiveHours(
-                                localStartHour,
-                                localStartMinute,
-                                localEndHour,
-                                localEndMinute
-                            )
+                        prefs.setAlwaysOn(alwaysOn)
+                        if (!alwaysOn) {
+                            prefs.setActiveHours(startMinute, endMinute)
                         }
-                        snackbarHostState.showSnackbar(context.getString(R.string.hours_saved))
                         navController.popBackStack()
                     }
                 },
@@ -188,45 +174,58 @@ fun ActiveHoursScreen(navController: NavController) {
         }
     }
 
-    // Time picker dialogs
-    if (showStartTimePicker) {
+    if (showStartPicker) {
         TimePickerDialog(
-            onDismiss = { showStartTimePicker = false },
-            onConfirm = { hour, minute ->
-                localStartHour = hour
-                localStartMinute = minute
-                showStartTimePicker = false
-            },
-            initialHour = localStartHour,
-            initialMinute = localStartMinute
+            title = stringResource(R.string.start_time),
+            initialMinuteOfDay = startMinute,
+            onDismiss = { showStartPicker = false },
+            onConfirm = { minutes ->
+                startMinute = minutes
+                showStartPicker = false
+            }
         )
     }
 
-    if (showEndTimePicker) {
+    if (showEndPicker) {
         TimePickerDialog(
-            onDismiss = { showEndTimePicker = false },
-            onConfirm = { hour, minute ->
-                localEndHour = hour
-                localEndMinute = minute
-                showEndTimePicker = false
-            },
-            initialHour = localEndHour,
-            initialMinute = localEndMinute
+            title = stringResource(R.string.end_time),
+            initialMinuteOfDay = endMinute,
+            onDismiss = { showEndPicker = false },
+            onConfirm = { minutes ->
+                endMinute = minutes
+                showEndPicker = false
+            }
         )
+    }
+}
+
+@Composable
+private fun TimeField(label: String, minuteOfDay: Int, onClick: () -> Unit) {
+    Column {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+            Text(text = formatMinute(minuteOfDay), style = MaterialTheme.typography.titleLarge)
+        }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TimePickerDialog(
+private fun TimePickerDialog(
+    title: String,
+    initialMinuteOfDay: Int,
     onDismiss: () -> Unit,
-    onConfirm: (Int, Int) -> Unit,
-    initialHour: Int,
-    initialMinute: Int
+    onConfirm: (Int) -> Unit
 ) {
-    val timePickerState = rememberTimePickerState(
-        initialHour = initialHour,
-        initialMinute = initialMinute,
+    val safeMinute = initialMinuteOfDay.coerceIn(0, ActiveHours.MINUTES_IN_DAY - 1)
+    val state = rememberTimePickerState(
+        initialHour = safeMinute / 60,
+        initialMinute = safeMinute % 60,
         is24Hour = true
     )
 
@@ -236,24 +235,21 @@ fun TimePickerDialog(
                 modifier = Modifier.padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = stringResource(R.string.select_time),
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Text(text = title, style = MaterialTheme.typography.titleMedium)
                 Spacer(modifier = Modifier.height(16.dp))
-                TimePicker(state = timePickerState)
+                TimePicker(state = state)
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    androidx.compose.material3.TextButton(onClick = onDismiss) {
+                    TextButton(onClick = onDismiss) {
                         Text(stringResource(R.string.cancel))
                     }
-                    androidx.compose.material3.TextButton(
+                    TextButton(
                         onClick = {
-                            onConfirm(timePickerState.hour, timePickerState.minute)
+                            onConfirm(ActiveHours.minuteOfDay(state.hour, state.minute))
                         }
                     ) {
                         Text(stringResource(R.string.ok))

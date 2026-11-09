@@ -1,10 +1,10 @@
 package com.mctb.autoreply.ui.screens
 
 import android.Manifest
-import android.content.Intent
-import android.net.Uri
+import android.content.pm.PackageManager
 import android.os.Build
-import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,10 +13,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -34,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,69 +51,104 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.MultiplePermissionsState
-import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.mctb.autoreply.R
 import com.mctb.autoreply.data.AppPreferences
-import com.mctb.autoreply.service.CallMonitorService
+import com.mctb.autoreply.data.Quota
+import com.mctb.autoreply.createCallScreeningRoleRequestIntent
+import com.mctb.autoreply.rememberCallScreeningRoleHeld
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(navController: NavController) {
     val context = LocalContext.current
     val prefs = remember { AppPreferences(context) }
     val scope = rememberCoroutineScope()
 
-    // Collect state from DataStore
     val isEnabled by prefs.isEnabled.collectAsState(initial = false)
-    val usageStatus by prefs.usageStatus.collectAsState(initial = com.mctb.autoreply.data.UsageStatus(0, false))
+    val replyCount by prefs.replyCount.collectAsState(initial = 0)
+    val isUnlimited by prefs.isUnlimited.collectAsState(initial = false)
+    val alwaysOn by prefs.isAlwaysOn.collectAsState(initial = false)
+    val startMinute by prefs.startMinuteOfDay.collectAsState(
+        initial = AppPreferences.DEFAULT_START_HOUR * 60
+    )
+    val endMinute by prefs.endMinuteOfDay.collectAsState(
+        initial = AppPreferences.DEFAULT_END_HOUR * 60
+    )
 
-    // Permission handling
-    val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        listOf(
-            Manifest.permission.READ_PHONE_STATE,
-            Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.SEND_SMS,
-            Manifest.permission.POST_NOTIFICATIONS
-        )
-    } else {
-        listOf(
-            Manifest.permission.READ_PHONE_STATE,
-            Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.SEND_SMS
-        )
+    val quota = remember(replyCount, isUnlimited) { Quota(replyCount, isUnlimited) }
+
+    val roleHeld = rememberCallScreeningRoleHeld()
+
+    var notificationsGranted by remember {
+        mutableStateOf(areNotificationsPermitted(context))
     }
-
-    val permissionsState = rememberMultiplePermissionsState(permissions = permissions)
-
     var showLimitDialog by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topAppBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) }
-            )
+    /**
+     * Set when the user flips the switch while a grant is still outstanding, so
+     * enabling completes by itself once the grant lands. Without this the switch
+     * would silently do nothing and the user would have to notice and retry.
+     */
+    var pendingEnable by remember { mutableStateOf(false) }
+
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        notificationsGranted = granted
+    }
+
+    val roleLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        // Result is ignored; the role state is re-read on resume.
+    }
+
+    val setupComplete = roleHeld && notificationsGranted
+
+    // Finish the enable the user already asked for, now that access was granted.
+    LaunchedEffect(setupComplete, pendingEnable) {
+        if (pendingEnable && setupComplete) {
+            pendingEnable = false
+            prefs.setEnabled(true)
         }
+    }
+
+    Scaffold(
+        topAppBar = { TopAppBar(title = { Text(stringResource(R.string.app_name)) }) }
     ) { paddingValues ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Permission warning card
-            if (!permissionsState.allPermissionsGranted) {
-                PermissionWarningCard(permissionsState)
+            if (!setupComplete) {
+                SetupCard(
+                    roleHeld = roleHeld,
+                    notificationsGranted = notificationsGranted,
+                    onRequestRole = {
+                        createCallScreeningRoleRequestIntent(context)?.let(roleLauncher::launch)
+                    },
+                    onRequestNotifications = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                )
             }
 
-            // Status card
-            StatusCard(isEnabled = isEnabled)
+            StatusCard(
+                isEnabled = isEnabled,
+                alwaysOn = alwaysOn,
+                startMinuteOfDay = startMinute,
+                endMinuteOfDay = endMinute
+            )
 
-            // Master enable/disable switch
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -130,55 +170,69 @@ fun HomeScreen(navController: NavController) {
                     Switch(
                         checked = isEnabled,
                         onCheckedChange = { enabled ->
-                            if (enabled) {
-                                // Check permissions
-                                if (!permissionsState.allPermissionsGranted) {
-                                    permissionsState.launchMultiplePermissionRequest()
-                                    return@Switch
-                                }
-
-                                // Check limit
-                                if (usageStatus.hasReachedLimit) {
-                                    showLimitDialog = true
-                                    return@Switch
-                                }
-
-                                // Enable
-                                scope.launch {
-                                    prefs.setEnabled(true)
-                                    CallMonitorService.start(context)
-                                }
-                            } else {
-                                // Disable
-                                scope.launch {
-                                    prefs.setEnabled(false)
-                                    CallMonitorService.stop(context)
-                                }
+                            if (!enabled) {
+                                scope.launch { prefs.setEnabled(false) }
+                                return@Switch
                             }
+                            if (quota.isExhausted) {
+                                showLimitDialog = true
+                                return@Switch
+                            }
+                            if (!setupComplete) {
+                                pendingEnable = true
+                                if (!roleHeld) {
+                                    createCallScreeningRoleRequestIntent(context)
+                                        ?.let(roleLauncher::launch)
+                                } else {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        notificationLauncher
+                                            .launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    }
+                                }
+                                return@Switch
+                            }
+                            scope.launch { prefs.setEnabled(true) }
                         }
                     )
                 }
             }
 
-            // Usage display
-            UsageCard(usageStatus = usageStatus, onViewUsageClick = {
-                navController.navigate("usage")
-            })
+            UsageCard(quota = quota, onViewUsageClick = { navController.navigate("usage") })
 
-            // Configuration buttons
-            ConfigurationButtons(
-                onMessageEditorClick = { navController.navigate("message_editor") },
-                onActiveHoursClick = { navController.navigate("active_hours") }
-            )
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilledTonalButton(
+                    onClick = { navController.navigate("message_editor") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null)
+                    Spacer(modifier = Modifier.padding(4.dp))
+                    Text(stringResource(R.string.configure_message))
+                }
 
-            // Battery optimization reminder
-            if (isEnabled) {
-                BatteryOptimizationCard()
+                FilledTonalButton(
+                    onClick = { navController.navigate("active_hours") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Schedule, contentDescription = null)
+                    Spacer(modifier = Modifier.padding(4.dp))
+                    Text(stringResource(R.string.configure_hours))
+                }
+
+                FilledTonalButton(
+                    onClick = { navController.navigate("how_it_works") },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.HelpOutline, contentDescription = null)
+                    Spacer(modifier = Modifier.padding(4.dp))
+                    Text(stringResource(R.string.how_it_works_title))
+                }
             }
         }
     }
 
-    // Limit reached dialog
     if (showLimitDialog) {
         AlertDialog(
             onDismissRequest = { showLimitDialog = false },
@@ -201,15 +255,27 @@ fun HomeScreen(navController: NavController) {
     }
 }
 
+private fun areNotificationsPermitted(context: android.content.Context): Boolean =
+    ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.POST_NOTIFICATIONS
+    ) == PackageManager.PERMISSION_GRANTED
+
 @Composable
-fun StatusCard(isEnabled: Boolean) {
+private fun StatusCard(
+    isEnabled: Boolean,
+    alwaysOn: Boolean,
+    startMinuteOfDay: Int,
+    endMinuteOfDay: Int
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = if (isEnabled)
+            containerColor = if (isEnabled) {
                 MaterialTheme.colorScheme.tertiaryContainer
-            else
+            } else {
                 MaterialTheme.colorScheme.surfaceVariant
+            }
         )
     ) {
         Row(
@@ -222,104 +288,50 @@ fun StatusCard(isEnabled: Boolean) {
             Icon(
                 imageVector = if (isEnabled) Icons.Default.Check else Icons.Default.Close,
                 contentDescription = null,
-                tint = if (isEnabled)
+                tint = if (isEnabled) {
                     MaterialTheme.colorScheme.onTertiaryContainer
-                else
+                } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
-            Text(
-                text = if (isEnabled)
-                    stringResource(R.string.status_active)
-                else
-                    stringResource(R.string.status_inactive),
-                style = MaterialTheme.typography.bodyLarge
-            )
-        }
-    }
-}
-
-@Composable
-fun UsageCard(usageStatus: com.mctb.autoreply.data.UsageStatus, onViewUsageClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            Text(
-                text = stringResource(R.string.usage_label),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (usageStatus.isUnlimited) {
+            Column {
                 Text(
-                    text = stringResource(R.string.usage_unlimited),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            } else {
-                Text(
-                    text = stringResource(
-                        R.string.usage_count,
-                        usageStatus.count,
-                        AppPreferences.FREE_TIER_LIMIT
-                    ),
+                    text = if (isEnabled) {
+                        stringResource(R.string.status_active)
+                    } else {
+                        stringResource(R.string.status_inactive)
+                    },
                     style = MaterialTheme.typography.bodyLarge
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = { usageStatus.count.toFloat() / AppPreferences.FREE_TIER_LIMIT },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            TextButton(onClick = onViewUsageClick) {
-                Text(stringResource(R.string.view_usage))
+                if (isEnabled) {
+                    Text(
+                        text = if (alwaysOn) {
+                            stringResource(R.string.status_window_always)
+                        } else {
+                            stringResource(
+                                R.string.status_window_between,
+                                formatMinute(startMinuteOfDay),
+                                formatMinute(endMinuteOfDay)
+                            )
+                        },
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-fun ConfigurationButtons(
-    onMessageEditorClick: () -> Unit,
-    onActiveHoursClick: () -> Unit
+private fun SetupCard(
+    roleHeld: Boolean,
+    notificationsGranted: Boolean,
+    onRequestRole: () -> Unit,
+    onRequestNotifications: () -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        FilledTonalButton(
-            onClick = onMessageEditorClick,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Default.Edit, contentDescription = null)
-            Spacer(modifier = Modifier.padding(4.dp))
-            Text(stringResource(R.string.configure_message))
-        }
-
-        FilledTonalButton(
-            onClick = onActiveHoursClick,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Default.Schedule, contentDescription = null)
-            Spacer(modifier = Modifier.padding(4.dp))
-            Text(stringResource(R.string.configure_hours))
-        }
-    }
-}
-
-@OptIn(ExperimentalPermissionsApi::class)
-@Composable
-fun PermissionWarningCard(permissionsState: MultiplePermissionsState) {
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
+        colors = CardDefaults.outlinedCardColors(
             containerColor = MaterialTheme.colorScheme.errorContainer
         )
     ) {
@@ -338,68 +350,114 @@ fun PermissionWarningCard(permissionsState: MultiplePermissionsState) {
                     tint = MaterialTheme.colorScheme.onErrorContainer
                 )
                 Text(
-                    text = stringResource(R.string.permissions_required_title),
+                    text = stringResource(R.string.setup_required_title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
             }
+
             Spacer(modifier = Modifier.height(8.dp))
+
             Text(
-                text = stringResource(R.string.permissions_required_desc),
+                text = stringResource(R.string.setup_required_desc),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onErrorContainer
             )
+
             Spacer(modifier = Modifier.height(12.dp))
-            FilledTonalButton(
-                onClick = { permissionsState.launchMultiplePermissionRequest() },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(stringResource(R.string.grant_permissions))
-            }
+
+            SetupRow(
+                done = roleHeld,
+                label = stringResource(R.string.setup_step_call_screening),
+                actionLabel = stringResource(R.string.setup_step_grant),
+                onAction = onRequestRole
+            )
+
+            SetupRow(
+                done = notificationsGranted,
+                label = stringResource(R.string.setup_step_notifications),
+                actionLabel = stringResource(R.string.setup_step_grant),
+                onAction = onRequestNotifications
+            )
         }
     }
 }
 
 @Composable
-fun BatteryOptimizationCard() {
-    val context = LocalContext.current
-
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth()
+private fun SetupRow(done: Boolean, label: String, actionLabel: String, onAction: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = if (done) Icons.Default.Check else Icons.Default.Close,
+                contentDescription = null
+            )
+            Text(text = label, style = MaterialTheme.typography.bodyMedium)
+        }
+        if (!done) {
+            TextButton(onClick = onAction) { Text(actionLabel) }
+        }
+    }
+}
+
+@Composable
+private fun UsageCard(quota: Quota, onViewUsageClick: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
             Text(
-                text = stringResource(R.string.battery_optimization_title),
-                style = MaterialTheme.typography.titleSmall,
+                text = stringResource(R.string.usage_label),
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.battery_optimization_desc),
-                style = MaterialTheme.typography.bodySmall
-            )
             Spacer(modifier = Modifier.height(8.dp))
-            TextButton(
-                onClick = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                            data = Uri.parse("package:${context.packageName}")
-                        }
-                        try {
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            // Battery optimization settings not available
-                        }
-                    }
+
+            if (quota.isUnlimited) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
+                    Text(
+                        text = stringResource(R.string.usage_unlimited),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
-            ) {
-                Text(stringResource(R.string.disable_optimization))
+            } else {
+                Text(
+                    text = stringResource(R.string.usage_count, quota.used, quota.limit),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { quota.used.toFloat() / quota.limit.toFloat() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = onViewUsageClick) {
+                Text(stringResource(R.string.view_usage))
             }
         }
     }
+}
+
+/** 1305 -> "21:45". */
+internal fun formatMinute(minuteOfDay: Int): String {
+    val safe = minuteOfDay.coerceIn(0, 24 * 60 - 1)
+    return "%02d:%02d".format(safe / 60, safe % 60)
 }
